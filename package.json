@@ -1,0 +1,21 @@
+{
+  "name": "brain-loop",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --filter @brain-loop/desktop tauri:dev",
+    "build": "turbo build",
+    "typecheck": "turbo typecheck",
+    "lint": "turbo lint"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "devDependencies": {
+    "turbo": "^2.5.0",
+    "typescript": "^5.8.0"
+  },
+  "packageManager": "bun@1.2.0"
+}
+

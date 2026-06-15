@@ -1,0 +1,11 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="64" height="64" rx="16" fill="#111318"/>
+  <path d="M32 11C22 6 10 14 10 28C10 36 15 42 23 43C15 49 20 58 31 58C39 58 44 52 42 45C51 44 57 37 55 28C53 15 42 6 32 11C43 17 43 29 32 35C21 41 22 52 32 58" stroke="url(#brain-loop-stroke)" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <defs>
+    <linearGradient id="brain-loop-stroke" x1="14" x2="50" y1="12" y2="58" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#BEEBFF"/>
+      <stop offset="0.45" stop-color="#9DE2FF"/>
+      <stop offset="1" stop-color="#5AA7FF"/>
+    </linearGradient>
+  </defs>
+</svg>
