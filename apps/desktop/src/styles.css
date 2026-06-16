@@ -48,7 +48,7 @@
 body {
   background: #141414;
   color: #f4f4f5;
-  font-size: 13px;
+  font-size: 14px;
   margin: 0;
 }
 
@@ -189,7 +189,7 @@ button {
 }
   body {
     @apply bg-background text-foreground;
-    font-size: 13px;
+    font-size: 14px;
   }
   html {
     @apply font-sans;
