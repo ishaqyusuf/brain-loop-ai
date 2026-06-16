@@ -7,7 +7,7 @@ Make global handoff queue state visible, searchable, and actionable without open
 ## Planned Behavior
 
 - Display queue items across statuses: queued, picked, started, stale-started, submitted, reviewing, reviewed-fix-request, landing, blocked, and approved.
-- Show project, priority, agent, recommended agent, handoff path, execution path, worktree path, last error, and history.
+- Show standard thread/task title, project, priority, agent, recommended agent, handoff path, execution path, worktree path, last error, and history.
 - Provide filters for status, project, agent, priority, and stale active items.
 - Show clear empty, loading, malformed-file, and ineligible-project states.
 
@@ -32,10 +32,15 @@ Make global handoff queue state visible, searchable, and actionable without open
 
 - The UI features a `QueueTable` embedded in the `Queue` tab.
 - Filtering is available by `Status`, `Agent`, `Project`, `Priority`, and stale active-work age via standard drop-down menus.
-- It displays Project, Status, Agent, Priority, queue age, and warning badges in a responsive table.
+- It displays Task, Project, Status, Agent, Priority, queue age, and warning badges in a responsive table.
 - Queue summary metrics show active, blocked, stale, submitted, and approved work without row-by-row inspection.
 - Stale picked/started/stale-started work and disabled or unknown project assignments surface as warnings without mutating queue JSON.
-- Row-level `Details` actions trigger a side-sheet exposing execution path, worktree path, plan path, handoff path, active handoff path, review path, runner/session IDs, lease timing, explicit last error state, and history log.
+- Row-level `Details` actions trigger a side-sheet exposing task name, execution path, worktree path, plan path, handoff path, active handoff path, review path, runner/session IDs, submitted/reviewed/approved timestamps, lease timing, explicit last error state, and history log.
+- Queue-backed thread rows and queue details prefer `threadTitle` for the human-readable title. Older queue items can still use `threadName` or `taskName`, and missing titles are displayed from a cleaned slug with date prefixes and hyphens removed.
+- Queue detail sheets expose recommended runner, recommended model, and model recommendation reason.
+- Queue items with a durable `waitingReason` show a compact Waiting badge, appear in queue warnings, and expose the full waiting reason in the detail sheet.
+- Queue detail sheets expose dependency metadata through `dependsOn` and `blockedBy` rows so sequencing waits can be inspected without opening queue JSON.
+- Queue table wrappers, empty states, detail metadata, last-error display, and history separation use shadcn Card, Empty, Alert, and Separator composition.
 - Relies on the `list_queue` backend endpoint mapped to frontend `listQueue()`.
 - Uses `list_projects` to annotate disabled/ineligible project warnings.
 - Provides loading, empty data, and visible queue-fetch error states.

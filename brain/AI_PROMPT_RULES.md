@@ -15,7 +15,6 @@ Captures durable rules for prompts, handoffs, and AI implementation work.
 ## Brain Loop Rules
 
 - The desktop app is an orchestrator, not the source of truth.
-- Brain JSON files under `~/.codex/brain-project-manager` remain authoritative.
-- Rust owns process control, PTY sessions, file locks, and atomic JSON writes.
+- Brain state under `~/.brain-loop` remains authoritative: `settings.toml` plus JSON project, queue, thread, lock, workspace, and log metadata files.
+- Rust owns process control, PTY sessions, file locks, and atomic state-file writes.
 - React renders state and sends explicit commands to Rust.
-

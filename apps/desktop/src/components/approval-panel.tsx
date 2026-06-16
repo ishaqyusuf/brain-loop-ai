@@ -12,7 +12,7 @@ import { AlertCircle, CheckCircle2, Clock } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 
 const sampleRequests: Record<ApprovalKind, Omit<Parameters<typeof requestApproval>[0], "kind">> = {
@@ -35,7 +35,7 @@ const sampleRequests: Record<ApprovalKind, Omit<Parameters<typeof requestApprova
     title: "Override queue status",
     description: "Allow a destructive queue-state override requested by automation.",
     risk: "The action can block or replace a queue item state.",
-    path: "/Users/M1PRO/.codex/brain-project-manager/queues/handoffs",
+    path: "/Users/M1PRO/.brain-loop/queues/handoffs",
     requestedBy: "manual-stub",
   },
 };
@@ -112,13 +112,13 @@ export function ApprovalPanel() {
       )}
 
       <div className="flex flex-wrap justify-end gap-2">
-        <Button size="sm" variant="outline" onClick={() => void createSample("command")}>
+        <Button size="sm" variant="secondary" onClick={() => void createSample("command")}>
           Stub Command
         </Button>
-        <Button size="sm" variant="outline" onClick={() => void createSample("permission")}>
+        <Button size="sm" variant="secondary" onClick={() => void createSample("permission")}>
           Stub Permission
         </Button>
-        <Button size="sm" variant="outline" onClick={() => void createSample("destructive")}>
+        <Button size="sm" variant="secondary" onClick={() => void createSample("destructive")}>
           Stub Destructive
         </Button>
       </div>
@@ -132,9 +132,9 @@ export function ApprovalPanel() {
       ) : (
         <div className="space-y-3">
           {requests.map((request) => (
-            <Card key={request.id} className="shadow-none">
-              <CardHeader className="p-4 pb-2">
-                <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
+            <section key={request.id} className="rounded-md bg-white/[0.035] px-3.5 py-3">
+              <div className="pb-2">
+                <h3 className="flex flex-wrap items-center gap-2 text-[13px] font-medium text-zinc-100">
                   {request.title}
                   <Badge variant={request.status === "pending" ? "default" : "secondary"}>
                     {request.status}
@@ -142,20 +142,23 @@ export function ApprovalPanel() {
                   <Badge variant={request.kind === "destructive" ? "destructive" : "outline"}>
                     {request.kind}
                   </Badge>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3 p-4 pt-0 text-sm">
-                <p className="text-muted-foreground">{request.description}</p>
-                <div className="rounded-md bg-muted p-3 text-xs">
-                  <div><span className="font-medium">Risk:</span> {request.risk}</div>
-                  {request.command && <div><span className="font-medium">Command:</span> {request.command}</div>}
-                  {request.path && <div className="break-all"><span className="font-medium">Path:</span> {request.path}</div>}
-                  {request.queueItemId && <div><span className="font-medium">Queue:</span> {request.queueItemId}</div>}
-                  {request.runnerId && <div><span className="font-medium">Runner:</span> {request.runnerId}</div>}
-                  {request.sessionId && <div><span className="font-medium">Session:</span> {request.sessionId}</div>}
-                </div>
+                </h3>
+              </div>
+              <div className="space-y-3 text-[13px]">
+                <p className="text-zinc-400">{request.description}</p>
+                <Alert className="rounded-md border-transparent bg-white/[0.04] p-3 text-xs">
+                  <AlertDescription className="space-y-1 text-xs">
+                    <div><span className="font-medium">Risk:</span> {request.risk}</div>
+                    {request.command && <div><span className="font-medium">Command:</span> {request.command}</div>}
+                    {request.path && <div className="break-all"><span className="font-medium">Path:</span> {request.path}</div>}
+                    {request.queueItemId && <div><span className="font-medium">Queue:</span> {request.queueItemId}</div>}
+                    {request.runnerId && <div><span className="font-medium">Runner:</span> {request.runnerId}</div>}
+                    {request.sessionId && <div><span className="font-medium">Session:</span> {request.sessionId}</div>}
+                  </AlertDescription>
+                </Alert>
 
-                <div className="space-y-1 border-l-2 pl-3 text-xs">
+                <Separator />
+                <div className="space-y-1 border-l border-white/10 pl-3 text-xs">
                   {request.history.map((entry, index) => (
                     <div key={`${entry.at}-${index}`}>
                       <span className="text-muted-foreground">{new Date(entry.at).toLocaleString()}</span>
@@ -168,19 +171,19 @@ export function ApprovalPanel() {
 
                 {request.status === "pending" && (
                   <div className="flex justify-end gap-2">
-                    <Button size="sm" variant="outline" onClick={() => void resolveRequest(request, "expire")}>
+                    <Button size="sm" variant="secondary" onClick={() => void resolveRequest(request, "expire")}>
                       Expire
                     </Button>
                     <Button size="sm" variant="destructive" onClick={() => void resolveRequest(request, "deny")}>
                       Deny
                     </Button>
-                    <Button size="sm" onClick={() => void resolveRequest(request, "approve")}>
+                    <Button size="sm" variant="secondary" onClick={() => void resolveRequest(request, "approve")}>
                       Approve
                     </Button>
                   </div>
                 )}
-              </CardContent>
-            </Card>
+              </div>
+            </section>
           ))}
         </div>
       )}

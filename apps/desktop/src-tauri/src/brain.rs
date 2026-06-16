@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::io;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueueHistoryEntry {
     pub at: String,
     pub by: String,
@@ -23,9 +23,18 @@ pub struct QueueHistoryEntry {
     pub agent: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueueItem {
     pub id: String,
+    #[serde(
+        rename = "threadTitle",
+        alias = "threadName",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub thread_title: Option<String>,
+    #[serde(rename = "taskName", default, skip_serializing_if = "Option::is_none")]
+    pub task_name: Option<String>,
     #[serde(rename = "projectId")]
     pub project_id: String,
     #[serde(rename = "projectPath")]
@@ -34,6 +43,8 @@ pub struct QueueItem {
     pub worktree_path: Option<String>,
     #[serde(rename = "executionPath", default, skip_serializing_if = "Option::is_none")]
     pub execution_path: Option<String>,
+    #[serde(rename = "executionStrategy", default, skip_serializing_if = "Option::is_none")]
+    pub execution_strategy: Option<String>,
     #[serde(rename = "planPath")]
     pub plan_path: String,
     #[serde(rename = "handoffPath")]
@@ -48,6 +59,10 @@ pub struct QueueItem {
     pub recommended_agent: String,
     #[serde(rename = "recommendationReason")]
     pub recommendation_reason: String,
+    #[serde(rename = "recommendedModel", default, skip_serializing_if = "Option::is_none")]
+    pub recommended_model: Option<String>,
+    #[serde(rename = "modelRecommendationReason", default, skip_serializing_if = "Option::is_none")]
+    pub model_recommendation_reason: Option<String>,
     pub priority: String,
     pub attempt: u32,
     #[serde(rename = "createdBy")]
@@ -64,6 +79,8 @@ pub struct QueueItem {
     pub started_by: Option<String>,
     #[serde(rename = "runnerId", default, skip_serializing_if = "Option::is_none")]
     pub runner_id: Option<String>,
+    #[serde(rename = "reviewRunnerId", default, skip_serializing_if = "Option::is_none")]
+    pub review_runner_id: Option<String>,
     #[serde(rename = "sessionId", default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
     #[serde(rename = "submittedAt", default, skip_serializing_if = "Option::is_none")]
@@ -74,8 +91,34 @@ pub struct QueueItem {
     pub reviewed_at: Option<String>,
     #[serde(rename = "approvedAt", default, skip_serializing_if = "Option::is_none")]
     pub approved_at: Option<String>,
+    #[serde(rename = "landingStatus", default, skip_serializing_if = "Option::is_none")]
+    pub landing_status: Option<String>,
+    #[serde(rename = "landingBranch", default, skip_serializing_if = "Option::is_none")]
+    pub landing_branch: Option<String>,
+    #[serde(rename = "landedAt", default, skip_serializing_if = "Option::is_none")]
+    pub landed_at: Option<String>,
+    #[serde(rename = "landedBy", default, skip_serializing_if = "Option::is_none")]
+    pub landed_by: Option<String>,
+    #[serde(rename = "landedCommit", default, skip_serializing_if = "Option::is_none")]
+    pub landed_commit: Option<String>,
+    #[serde(rename = "landingError", default, skip_serializing_if = "Option::is_none")]
+    pub landing_error: Option<String>,
+    #[serde(rename = "preLandingStatus", default, skip_serializing_if = "Option::is_none")]
+    pub pre_landing_status: Option<String>,
+    #[serde(rename = "preLandingCommit", default, skip_serializing_if = "Option::is_none")]
+    pub pre_landing_commit: Option<String>,
+    #[serde(rename = "preLandingCommittedAt", default, skip_serializing_if = "Option::is_none")]
+    pub pre_landing_committed_at: Option<String>,
+    #[serde(rename = "preLandingCommitMessage", default, skip_serializing_if = "Option::is_none")]
+    pub pre_landing_commit_message: Option<String>,
     #[serde(rename = "lastError", default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+    #[serde(rename = "waitingReason", default, skip_serializing_if = "Option::is_none")]
+    pub waiting_reason: Option<String>,
+    #[serde(rename = "dependsOn", default, skip_serializing_if = "Vec::is_empty")]
+    pub depends_on: Vec<String>,
+    #[serde(rename = "blockedBy", default, skip_serializing_if = "Vec::is_empty")]
+    pub blocked_by: Vec<String>,
     #[serde(default)]
     pub history: Vec<QueueHistoryEntry>,
 }
@@ -88,8 +131,18 @@ pub struct Settings {
     pub default_implementation_interval_minutes: u32,
     #[serde(rename = "maxRunningProcesses")]
     pub max_running_processes: u32,
+    #[serde(rename = "maxImplementationAgents", default, skip_serializing_if = "Option::is_none")]
+    pub max_implementation_agents: Option<u32>,
+    #[serde(rename = "maxReviewAgents", default, skip_serializing_if = "Option::is_none")]
+    pub max_review_agents: Option<u32>,
     #[serde(rename = "maxPickedMinutes")]
     pub max_picked_minutes: u32,
+    #[serde(rename = "threadStorageRoot", default)]
+    pub thread_storage_root: String,
+    #[serde(rename = "worktreeStorageRoot", default)]
+    pub worktree_storage_root: String,
+    #[serde(rename = "executionStrategy", default)]
+    pub execution_strategy: String,
     #[serde(rename = "implementationDispatcher")]
     pub implementation_dispatcher: ImplementationDispatcher,
 }
@@ -222,8 +275,9 @@ pub fn update_queue_item_status(
 
     match new_status {
         "picked" => item.picked_at = Some(now.clone()),
-        "started" => item.agent_started_at = Some(now.clone()),
+        "started" | "reviewing" => item.agent_started_at = Some(now.clone()),
         "submitted" => item.submitted_at = Some(now.clone()),
+        "reviewed-fix-request" | "landing" => item.reviewed_at = Some(now.clone()),
         "blocked" => item.blocked_at = Some(now.clone()),
         "approved" => item.approved_at = Some(now.clone()),
         _ => {}

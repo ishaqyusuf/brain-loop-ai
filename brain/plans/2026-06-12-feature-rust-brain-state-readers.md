@@ -17,17 +17,17 @@ Done
 - Intake Item: Project phase 10-18%
 
 ## Goal Or Problem
-Add read-only Tauri commands that load Brain project manager settings, projects, queue summaries, active locks, and recent logs from `~/.codex/brain-project-manager`.
+Add read-only Tauri commands that load Brain Loop settings, projects, queue summaries, active locks, and recent logs from the app state root.
 
 ## Current Context
-Brain Loop must treat global Brain JSON files as the durable source of truth. Rust owns native filesystem access and should expose typed command responses to React.
+Brain Loop treats `~/.brain-loop` as the durable app state root. Settings are stored in `~/.brain-loop/settings.toml`, while projects, queues, threads, locks, and logs remain JSON files. Rust owns native filesystem access, performs read-only migration from the legacy `~/.codex/brain-project-manager` root when needed, and exposes typed command responses to React.
 
 ## Proposed Approach
 Create Rust modules under `apps/desktop/src-tauri/src` for paths, JSON reads, typed models, and Tauri commands. Keep command handlers thin and reusable read logic in modules.
 
 ## Implementation Steps
 - Add Rust structs for settings, projects, queue items, locks, and log summaries.
-- Resolve the global Brain project manager root from the user's home directory.
+- Resolve the Brain Loop app state root from the user's home directory.
 - Implement tolerant read helpers for missing optional files and invalid queue files.
 - Expose commands for `get_brain_status`, `list_projects`, `list_queue`, and `list_recent_logs`.
 - Emit clear error responses without panics.

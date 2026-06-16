@@ -29,6 +29,8 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Empty, EmptyDescription, EmptyTitle } from "@/components/ui/empty";
+import { Separator } from "@/components/ui/separator";
 
 type RuntimeQueueItem = QueueItem & {
   lease?: {
@@ -83,6 +85,34 @@ function fieldValue(value: unknown) {
   return String(value);
 }
 
+function formatIdList(value: string[] | null | undefined) {
+  if (!value || value.length === 0) return "None";
+  return value.join(", ");
+}
+
+function taskNameFromPath(value: string | null | undefined) {
+  if (!value) return null;
+  const fileName = value.split(/[\\/]/).pop()?.replace(/\.(md|json)$/i, "") ?? value;
+  const withoutDate = fileName.replace(/^\d{4}-\d{2}-\d{2}-/, "");
+  const withoutSuffix = withoutDate.replace(/-(handoff|fix)$/i, "");
+  const title = withoutSuffix
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+  return title || null;
+}
+
+function getTaskName(item: QueueItem) {
+  return (
+    item.taskName?.trim() ||
+    taskNameFromPath(item.handoffPath) ||
+    taskNameFromPath(item.planPath) ||
+    taskNameFromPath(item.activeHandoffPath) ||
+    item.id
+  );
+}
+
 function formatAge(item: QueueItem) {
   const ageMinutes = getAgeMinutes(item.agentStartedAt ?? item.pickedAt ?? item.createdAt);
   if (ageMinutes === null) return "Unknown";
@@ -132,15 +162,18 @@ export function QueueTable({ items, projects, isLoading, error }: QueueTableProp
         const stale = isStaleCandidate(item);
         const disabled = project?.enabled === false;
         const unknownProject = projects.length > 0 && !project;
+        const waiting = Boolean(item.waitingReason);
 
-        if (!stale && !disabled && !unknownProject) return null;
+        if (!stale && !disabled && !unknownProject && !waiting) return null;
 
         return {
           id: item.id,
-          label: item.projectId ?? item.id,
+          label: getTaskName(item),
           stale,
           disabled,
           unknownProject,
+          waiting,
+          waitingReason: item.waitingReason,
           age: formatAge(item),
         };
       })
@@ -161,10 +194,11 @@ export function QueueTable({ items, projects, isLoading, error }: QueueTableProp
           <Skeleton className="h-10 w-32" />
           <Skeleton className="h-10 w-32" />
         </div>
-        <div className="rounded-md border">
+        <Card className="gap-0 overflow-hidden rounded-md py-0 shadow-none">
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead>Task</TableHead>
                 <TableHead>Project</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Agent</TableHead>
@@ -175,6 +209,7 @@ export function QueueTable({ items, projects, isLoading, error }: QueueTableProp
             <TableBody>
               {Array.from({ length: 5 }).map((_, i) => (
                 <TableRow key={i}>
+                  <TableCell><Skeleton className="h-4 w-40" /></TableCell>
                   <TableCell><Skeleton className="h-4 w-24" /></TableCell>
                   <TableCell><Skeleton className="h-4 w-16" /></TableCell>
                   <TableCell><Skeleton className="h-4 w-20" /></TableCell>
@@ -184,7 +219,7 @@ export function QueueTable({ items, projects, isLoading, error }: QueueTableProp
               ))}
             </TableBody>
           </Table>
-        </div>
+        </Card>
       </div>
     );
   }
@@ -219,6 +254,7 @@ export function QueueTable({ items, projects, isLoading, error }: QueueTableProp
                   {warning.stale && <span> has stale active work ({warning.age})</span>}
                   {warning.disabled && <span> is assigned to a disabled project</span>}
                   {warning.unknownProject && <span> is not matched to a registered project</span>}
+                  {warning.waiting && <span> is waiting: {warning.waitingReason}</span>}
                 </div>
               ))}
               {warnings.length > 5 && (
@@ -301,10 +337,11 @@ export function QueueTable({ items, projects, isLoading, error }: QueueTableProp
         </Select>
       </div>
 
-      <div className="rounded-md border bg-card text-card-foreground">
+      <Card className="gap-0 overflow-hidden rounded-md py-0 shadow-none">
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead>Task</TableHead>
               <TableHead>Project</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Agent</TableHead>
@@ -317,13 +354,20 @@ export function QueueTable({ items, projects, isLoading, error }: QueueTableProp
           <TableBody>
             {filteredItems.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="h-24 text-center">
-                  No queue items found.
+                <TableCell colSpan={8} className="h-24 text-center">
+                  <Empty className="mx-auto max-w-sm border-0 bg-transparent">
+                    <EmptyTitle>No queue items found</EmptyTitle>
+                    <EmptyDescription>Queue items matching the current filters will appear here.</EmptyDescription>
+                  </Empty>
                 </TableCell>
               </TableRow>
             ) : (
               filteredItems.map((item) => (
                 <TableRow key={item.id}>
+                  <TableCell className="max-w-[260px]">
+                    <div className="truncate font-medium">{getTaskName(item)}</div>
+                    <div className="truncate text-xs text-muted-foreground">{item.id}</div>
+                  </TableCell>
                   <TableCell className="font-medium">
                     {item.projectId ?? "Global"}
                   </TableCell>
@@ -346,68 +390,96 @@ export function QueueTable({ items, projects, isLoading, error }: QueueTableProp
                     {getItemProject(item, projects)?.enabled === false && (
                       <Badge variant="destructive">Disabled</Badge>
                     )}
+                    {item.waitingReason && (
+                      <Badge variant="outline">Waiting</Badge>
+                    )}
                   </TableCell>
                   <TableCell className="text-right">
                     <Sheet>
                       <SheetTrigger asChild>
-                        <Button variant="outline" size="sm" onClick={() => setSelectedItem(item)}>
+                        <Button variant="secondary" size="sm" onClick={() => setSelectedItem(item)}>
                           Details
                         </Button>
                       </SheetTrigger>
                       <SheetContent className="w-[400px] sm:w-[540px] overflow-y-auto">
                         <SheetHeader>
-                          <SheetTitle>Queue Item Details</SheetTitle>
+                          <SheetTitle>{getTaskName(item)}</SheetTitle>
                           <SheetDescription>
                             {item.id}
                           </SheetDescription>
                         </SheetHeader>
                         {selectedItem && selectedItem.id === item.id && (
                           <div className="mt-6 space-y-4 text-sm">
-                            <div className="grid grid-cols-3 gap-2 border-b pb-4">
-                              <div className="font-semibold">Project ID</div>
-                              <div className="col-span-2">{fieldValue(item.projectId)}</div>
-                              <div className="font-semibold">Project Path</div>
-                              <div className="col-span-2 break-all">{fieldValue(item.projectPath)}</div>
-                              <div className="font-semibold">Execution Path</div>
-                              <div className="col-span-2 break-all">{fieldValue(item.executionPath)}</div>
-                              <div className="font-semibold">Worktree Path</div>
-                              <div className="col-span-2 break-all">{fieldValue(item.worktreePath)}</div>
-                              <div className="font-semibold">Handoff Path</div>
-                              <div className="col-span-2 break-all">{fieldValue(item.handoffPath)}</div>
-                              <div className="font-semibold">Active Handoff Path</div>
-                              <div className="col-span-2 break-all">{fieldValue(item.activeHandoffPath)}</div>
-                              <div className="font-semibold">Review Path</div>
-                              <div className="col-span-2 break-all">{fieldValue(item.reviewPath)}</div>
-                              <div className="font-semibold">Plan Path</div>
-                              <div className="col-span-2 break-all">{fieldValue(item.planPath)}</div>
-                              <div className="font-semibold">Runner</div>
-                              <div className="col-span-2 break-all">{fieldValue(item.runnerId)}</div>
-                              <div className="font-semibold">Session</div>
-                              <div className="col-span-2 break-all">{fieldValue(item.sessionId)}</div>
-                              <div className="font-semibold">Lease</div>
-                              <div className="col-span-2 break-all">
-                                {formatLease(item as RuntimeQueueItem)}
-                              </div>
-                              <div className="font-semibold">Last Error</div>
-                              <div className="col-span-2 break-all">{fieldValue(item.lastError)}</div>
-                            </div>
+                            <Card className="rounded-md py-0 shadow-none">
+                              <CardContent className="grid grid-cols-3 gap-2 p-4">
+                                <div className="font-semibold">Task Name</div>
+                                <div className="col-span-2">{getTaskName(item)}</div>
+                                <div className="font-semibold">Project ID</div>
+                                <div className="col-span-2">{fieldValue(item.projectId)}</div>
+                                <div className="font-semibold">Project Path</div>
+                                <div className="col-span-2 break-all">{fieldValue(item.projectPath)}</div>
+                                <div className="font-semibold">Execution Path</div>
+                                <div className="col-span-2 break-all">{fieldValue(item.executionPath)}</div>
+                                <div className="font-semibold">Execution Strategy</div>
+                                <div className="col-span-2 break-all">{fieldValue(item.executionStrategy)}</div>
+                                <div className="font-semibold">Worktree Path</div>
+                                <div className="col-span-2 break-all">{fieldValue(item.worktreePath)}</div>
+                                <div className="font-semibold">Handoff Path</div>
+                                <div className="col-span-2 break-all">{fieldValue(item.handoffPath)}</div>
+                                <div className="font-semibold">Active Handoff Path</div>
+                                <div className="col-span-2 break-all">{fieldValue(item.activeHandoffPath)}</div>
+                                <div className="font-semibold">Review Path</div>
+                                <div className="col-span-2 break-all">{fieldValue(item.reviewPath)}</div>
+                                <div className="font-semibold">Plan Path</div>
+                                <div className="col-span-2 break-all">{fieldValue(item.planPath)}</div>
+                                <div className="font-semibold">Runner</div>
+                                <div className="col-span-2 break-all">{fieldValue(item.runnerId)}</div>
+                                <div className="font-semibold">Recommended Runner</div>
+                                <div className="col-span-2 break-all">{fieldValue(item.recommendedAgent)}</div>
+                                <div className="font-semibold">Recommended Model</div>
+                                <div className="col-span-2 break-all">{fieldValue(item.recommendedModel)}</div>
+                                <div className="font-semibold">Model Reason</div>
+                                <div className="col-span-2 break-all">{fieldValue(item.modelRecommendationReason)}</div>
+                                <div className="font-semibold">Session</div>
+                                <div className="col-span-2 break-all">{fieldValue(item.sessionId)}</div>
+                                <div className="font-semibold">Submitted At</div>
+                                <div className="col-span-2 break-all">{fieldValue(item.submittedAt)}</div>
+                                <div className="font-semibold">Reviewed At</div>
+                                <div className="col-span-2 break-all">{fieldValue(item.reviewedAt)}</div>
+                                <div className="font-semibold">Approved At</div>
+                                <div className="col-span-2 break-all">{fieldValue(item.approvedAt)}</div>
+                                <div className="font-semibold">Lease</div>
+                                <div className="col-span-2 break-all">
+                                  {formatLease(item as RuntimeQueueItem)}
+                                </div>
+                                <div className="font-semibold">Last Error</div>
+                                <div className="col-span-2 break-all">{fieldValue(item.lastError)}</div>
+                                <div className="font-semibold">Waiting Reason</div>
+                                <div className="col-span-2 break-all">{fieldValue(item.waitingReason)}</div>
+                                <div className="font-semibold">Depends On</div>
+                                <div className="col-span-2 break-all">{formatIdList(item.dependsOn)}</div>
+                                <div className="font-semibold">Blocked By</div>
+                                <div className="col-span-2 break-all">{formatIdList(item.blockedBy)}</div>
+                              </CardContent>
+                            </Card>
                             
                             {item.lastError ? (
-                              <div className="text-destructive">
-                                <div className="font-semibold mb-1">Last Error</div>
-                                <div className="bg-destructive/10 p-2 rounded whitespace-pre-wrap font-mono text-xs">
+                              <Alert variant="destructive">
+                                <AlertTitle>Last Error</AlertTitle>
+                                <AlertDescription className="whitespace-pre-wrap break-all font-mono text-xs">
                                   {item.lastError}
-                                </div>
-                              </div>
+                                </AlertDescription>
+                              </Alert>
                             ) : (
-                              <div className="text-muted-foreground">
-                                <div className="font-semibold mb-1">Last Error</div>
-                                <div className="bg-muted p-2 rounded font-mono text-xs">None</div>
-                              </div>
+                              <Alert>
+                                <AlertTitle>Last Error</AlertTitle>
+                                <AlertDescription className="font-mono text-xs">None</AlertDescription>
+                              </Alert>
                             )}
 
                             <div>
                               <div className="font-semibold mb-2">History</div>
+                              <Separator className="mb-3" />
                               <div className="space-y-3">
                                 {item.history?.map((h, i) => (
                                   <div key={i} className="text-xs border-l-2 pl-3 py-1">
@@ -428,7 +500,7 @@ export function QueueTable({ items, projects, isLoading, error }: QueueTableProp
             )}
           </TableBody>
         </Table>
-      </div>
+      </Card>
     </div>
   );
 }

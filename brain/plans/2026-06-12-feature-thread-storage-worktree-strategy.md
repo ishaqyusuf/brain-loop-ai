@@ -4,13 +4,13 @@
 Feature
 
 ## Status
-Proposed
+Done
 
 ## Created Date
 2026-06-12
 
 ## Last Updated
-2026-06-12
+2026-06-15
 
 ## Intake
 - Intake File: brain/intake/2026-06-12-loop-product-settings.md
@@ -24,6 +24,17 @@ Brain handoff currently defaults to isolated worktrees when possible, but this r
 
 ## Proposed Approach
 Add explicit settings for execution strategy and thread storage root, then reflect those settings in handoff queue items, thread UI, and scheduler behavior.
+
+## Implementation Notes
+
+- Added persisted settings fields `threadStorageRoot`, `worktreeStorageRoot`, and `executionStrategy`.
+- Supported execution strategies are `worktree`, `main-checkout`, and `auto`.
+- Default behavior remains `worktree`, preserving isolated per-task Git worktrees by default.
+- `main-checkout` skips worktree creation and sets queue `executionPath` to the project checkout with `executionStrategy: "main-checkout"`.
+- `auto` attempts isolated worktree preparation first and falls back to the main checkout when worktree preparation fails but the project path exists.
+- Queue items, durable agent thread metadata, runner prompts, queue details, and opened thread summaries now carry/display execution strategy.
+- Settings > Threads & Worktrees visibly warns when `main-checkout` execution is selected.
+- Added `bun --filter @brain-loop/desktop scheduler:qa` coverage for configured execution strategy, thread metadata, and main-checkout warning invariants.
 
 ## Implementation Steps
 - Define execution strategy values such as `worktree`, `main-checkout`, and `auto`.
@@ -78,7 +89,7 @@ Lower agent must report:
 - Thread storage paths may need migration when the state root changes.
 
 ## Open Questions
-- TODO: Final default thread storage root.
+- None for v1. The default thread storage root is `~/.brain-loop/threads`.
 
 ## Linked Task
 - Task Title: Add Thread Storage And Worktree Strategy Settings

@@ -1,6 +1,34 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { ApprovalRequest, ApprovalRequestInput, BrainStatus, BrainProject, QueueListResponse, QueueItem, LogSummary, LockResult, SchedulerStatus, LaunchAgentInfo } from "@brain-loop/brain-core";
+import type {
+  AgentThread,
+  ApprovalRequest,
+  ApprovalRequestInput,
+  BrainStatus,
+  BrainProject,
+  QueueListResponse,
+  QueueItem,
+  LogSummary,
+  LockResult,
+  SchedulerStatus,
+  LaunchAgentInfo,
+  Settings,
+  HarnessEventInput,
+  HarnessProviderCapability,
+  HarnessSession,
+  HarnessSessionStartInput,
+  DirectModelRuntimeContract,
+  DirectModelTurnInput,
+  DirectModelProviderRequest,
+  DirectModelProviderStreamParseInput,
+  DirectModelProviderStreamParseResult,
+  DirectModelTurnEvent,
+  DirectModelHarnessEventPreview,
+  DirectModelHarnessRecordResult,
+  DirectModelToolExecutionInput,
+  DirectModelToolExecutionResult,
+  DirectModelToolApprovalResult,
+} from "@brain-loop/brain-core";
 
 export interface LogEvent {
   line: string;
@@ -83,6 +111,14 @@ export async function getBrainStatus(): Promise<BrainStatus> {
   };
 }
 
+export async function getSettings(): Promise<Settings> {
+  return await invoke<Settings>("get_settings");
+}
+
+export async function updateSettings(settings: Settings): Promise<Settings> {
+  return await invoke<Settings>("update_settings", { settings });
+}
+
 export async function listProjects(): Promise<BrainProject[]> {
   return await invoke<BrainProject[]>("list_projects");
 }
@@ -153,6 +189,112 @@ export async function onApprovalEvent(
 
 export async function listQueue(): Promise<QueueListResponse> {
   return await invoke<QueueListResponse>("list_queue");
+}
+
+export async function listAgentThreads(): Promise<AgentThread[]> {
+  return await invoke<AgentThread[]>("list_agent_threads");
+}
+
+export async function listArchivedAgentThreads(): Promise<AgentThread[]> {
+  return await invoke<AgentThread[]>("list_archived_agent_threads");
+}
+
+export async function archiveAgentThread(
+  threadId: string,
+  by: string,
+  reason?: string,
+): Promise<AgentThread> {
+  return await invoke<AgentThread>("archive_agent_thread", {
+    threadId,
+    by,
+    reason: reason ?? null,
+  });
+}
+
+export async function listHarnessCapabilities(): Promise<HarnessProviderCapability[]> {
+  return await invoke<HarnessProviderCapability[]>("list_harness_capabilities");
+}
+
+export async function listDirectModelRuntimeContract(): Promise<DirectModelRuntimeContract> {
+  return await invoke<DirectModelRuntimeContract>("list_direct_model_runtime_contract");
+}
+
+export async function previewDirectModelProviderRequest(
+  input: DirectModelTurnInput,
+): Promise<DirectModelProviderRequest> {
+  return await invoke<DirectModelProviderRequest>("preview_direct_model_provider_request", {
+    input,
+  });
+}
+
+export async function previewDirectModelStreamEvents(
+  input: DirectModelProviderStreamParseInput,
+): Promise<DirectModelProviderStreamParseResult> {
+  return await invoke<DirectModelProviderStreamParseResult>(
+    "preview_direct_model_stream_events",
+    { input },
+  );
+}
+
+export async function previewDirectModelHarnessEvents(
+  events: DirectModelTurnEvent[],
+): Promise<DirectModelHarnessEventPreview> {
+  return await invoke<DirectModelHarnessEventPreview>(
+    "preview_direct_model_harness_events",
+    { events },
+  );
+}
+
+export async function recordDirectModelHarnessEvents(
+  events: DirectModelTurnEvent[],
+): Promise<DirectModelHarnessRecordResult> {
+  return await invoke<DirectModelHarnessRecordResult>(
+    "record_direct_model_harness_events",
+    { events },
+  );
+}
+
+export async function executeDirectModelTool(
+  input: DirectModelToolExecutionInput,
+): Promise<DirectModelToolExecutionResult> {
+  return await invoke<DirectModelToolExecutionResult>("execute_direct_model_tool", {
+    input,
+  });
+}
+
+export async function requestDirectModelToolApproval(
+  input: DirectModelToolExecutionInput,
+): Promise<DirectModelToolApprovalResult> {
+  return await invoke<DirectModelToolApprovalResult>(
+    "request_direct_model_tool_approval",
+    { input },
+  );
+}
+
+export async function startHarnessSession(input: HarnessSessionStartInput): Promise<HarnessSession> {
+  return await invoke<HarnessSession>("start_harness_session", { input });
+}
+
+export async function sendHarnessMessage(threadId: string, message: string): Promise<AgentThread> {
+  return await invoke<AgentThread>("send_harness_message", { threadId, message });
+}
+
+export async function stopHarnessSession(threadId: string): Promise<AgentThread> {
+  return await invoke<AgentThread>("stop_harness_session", { threadId });
+}
+
+export async function recordHarnessEvent(event: HarnessEventInput): Promise<AgentThread> {
+  return await invoke<AgentThread>("record_harness_event", { event });
+}
+
+export async function replayHarnessEvents(queueItemId: string): Promise<AgentThread> {
+  return await invoke<AgentThread>("replay_harness_events", { queueItemId });
+}
+
+export async function onHarnessEvent(callback: (event: HarnessEventInput) => void): Promise<UnlistenFn> {
+  return await listen<HarnessEventInput>("harness-event", (event) => {
+    callback(event.payload);
+  });
 }
 
 export async function listRecentLogs(): Promise<LogSummary[]> {

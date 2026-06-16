@@ -1,66 +1,82 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/geist";
 
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  color: #161616;
-  background: #f7f8f5;
+  color-scheme: dark;
+  color: #f4f4f5;
+  background: #141414;
   font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+    "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
   --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
 }
 
 body {
+  background: #141414;
+  color: #f4f4f5;
+  font-size: 13px;
   margin: 0;
+}
+
+:root.dark {
+  color-scheme: dark;
 }
 
 .boot-screen {
   align-items: center;
-  background: #f7f8f5;
-  color: #161616;
+  background: #141414;
+  color: #f4f4f5;
   display: flex;
   flex-direction: column;
   font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+    "Segoe UI", ui-sans-serif, system-ui, sans-serif;
   gap: 8px;
   justify-content: center;
   min-height: 100vh;
+}
+
+.dark .boot-screen {
+  background: #141414;
+  color: #f4f4f5;
+}
+
+.dark .boot-screen span {
+  color: #a1a1aa;
 }
 
 .boot-screen strong {
@@ -68,7 +84,7 @@ body {
 }
 
 .boot-screen span {
-  color: #687060;
+  color: #a1a1aa;
   font-size: 14px;
 }
 
@@ -77,231 +93,9 @@ body {
   text-align: center;
 }
 
-button {
-  border: 1px solid #c9cdc4;
-  border-radius: 6px;
-  background: #ffffff;
-  color: #161616;
-  font: inherit;
-  padding: 8px 12px;
-}
-
-.shell {
-  display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
-  min-height: 100vh;
-}
-
-.sidebar {
-  border-right: 1px solid #dfe3da;
-  background: #eef1ea;
-  padding: 24px;
-  display: flex;
-  flex-direction: column;
-}
-
-.sidebar-brand {
-  align-items: center;
-  display: flex;
-  gap: 12px;
-  margin-bottom: 28px;
-}
-
-.sidebar-brand-mark {
-  box-shadow: 0 10px 24px rgb(17 19 24 / 16%);
-  border-radius: 12px;
-  flex: 0 0 auto;
-}
-
-.sidebar-brand-copy {
-  min-width: 0;
-}
-
-.sidebar h1 {
-  font-size: 18px;
-  line-height: 1.1;
-  margin: 0;
-}
-
-.sidebar-brand-copy span {
-  color: #687060;
-  display: block;
-  font-size: 12px;
-  line-height: 1.5;
-  margin-top: 2px;
-}
-
-.sidebar nav {
-  display: grid;
-  gap: 8px;
-}
-
-.sidebar a {
-  border-radius: 6px;
-  color: #30352d;
-  display: block;
-  padding: 7px 8px;
-  text-decoration: none;
-}
-
-.sidebar a:hover {
-  background: #dfe3da;
-}
-
-.sidebar-status {
-  align-items: center;
-  border: 1px solid #dfe3da;
-  border-radius: 8px;
-  color: #30352d;
-  display: flex;
-  font-size: 12px;
-  gap: 8px;
-  margin-top: auto;
-  padding: 10px 12px;
-}
-
-.sidebar-status-dot {
-  background: #14b8a6;
-  border-radius: 999px;
-  box-shadow: 0 0 0 3px rgb(20 184 166 / 14%);
-  display: block;
-  height: 8px;
-  width: 8px;
-}
-
-.content {
-  padding: 32px;
-}
-
-.toolbar {
-  align-items: center;
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 24px;
-}
-
-.toolbar h2 {
-  font-size: 28px;
-  margin: 0;
-}
-
-.eyebrow {
-  color: #687060;
-  margin: 0 0 4px;
-  text-transform: uppercase;
-  font-size: 12px;
-}
-
-.controls {
-  display: flex;
-  gap: 8px;
-}
-
-.status-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
-}
-
-.status-card {
-  border: 1px solid #dfe3da;
-  border-radius: 8px;
-  background: #ffffff;
-  padding: 16px;
-}
-
-.status-card span {
-  color: #687060;
-  display: block;
-  font-size: 13px;
-  margin-bottom: 8px;
-}
-
-.status-card strong {
-  font-size: 24px;
-}
-
-.logs-panel {
-  display: grid;
-  grid-template-columns: 280px 1fr;
-  gap: 24px;
-  margin-top: 32px;
-  border-top: 1px solid #dfe3da;
-  padding-top: 32px;
-  height: 500px;
-}
-
-.logs-sidebar {
-  border-right: 1px solid #dfe3da;
-  padding-right: 16px;
-  overflow-y: auto;
-}
-
-.logs-sidebar h3 {
-  margin: 0 0 16px;
-  font-size: 16px;
-}
-
-.logs-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.logs-list button {
-  width: 100%;
-  text-align: left;
-  border: none;
-  background: transparent;
-  padding: 8px 12px;
-  border-radius: 4px;
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-}
-
-.logs-list button:hover {
-  background: #dfe3da;
-}
-
-.logs-list button.active {
-  background: #c9cdc4;
-  font-weight: 600;
-}
-
-.log-name {
-  font-size: 13px;
-  word-break: break-all;
-}
-
-.log-meta {
-  font-size: 11px;
-  color: #687060;
-  margin-top: 4px;
-}
-
-.logs-content {
-  background: #1e1e1e;
-  border-radius: 8px;
-  padding: 16px;
-  overflow-y: auto;
-  color: #d4d4d4;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-}
-
-.logs-pre {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-all;
-  font-size: 13px;
-}
-
 @theme inline {
   --font-heading: var(--font-sans);
-  --font-sans: 'Geist Variable', sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -380,8 +174,22 @@ button {
   * {
     @apply border-border outline-ring/50;
   }
+button {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+}
+
+[data-tauri-drag-region] {
+  user-select: none;
+  -webkit-user-select: none;
+}
   body {
     @apply bg-background text-foreground;
+    font-size: 13px;
   }
   html {
     @apply font-sans;

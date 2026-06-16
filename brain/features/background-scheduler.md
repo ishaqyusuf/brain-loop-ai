@@ -7,8 +7,9 @@ Controls background implementation and review automation ticks while respecting 
 ## Scope
 
 - Scheduler state machine: stopped, running, paused, error.
-- Reads intervals and limits from `~/.codex/brain-project-manager/settings.json`.
-- Enforces `maxRunningProcesses` before launching work.
+- Reads capacity, poll cadence, stale-run thresholds, and compatibility intervals from `~/.brain-loop/settings.toml`.
+- Enforces implementation capacity before launching implementation work.
+- Enforces review capacity before launching review work.
 - Menu bar and UI controls reflecting scheduler state.
 - Logs every scheduler decision and skipped tick.
 
@@ -19,18 +20,49 @@ Controls background implementation and review automation ticks while respecting 
 | State | Behavior |
 |-------|----------|
 | `stopped` | Initial state. No ticks fire. Must be started before automation. |
-| `running` | Ticks are allowed to fire. Implementation and review cycles execute. (Note: Interval loops are deferred to a future phase; currently ticks are triggered by app/tray interactions.) |
-| `paused` | Ticks are suspended. State preserved for resume. Manual run requests (`run_implementation_once`, `run_review_once`) are rejected in this state. |
+| `running` | The capacity loop repeatedly attempts implementation and review dispatch while open slots and eligible queue items exist. Manual run requests are also allowed. |
+| `paused` | Dispatch is suspended. The background loop remains alive but does not launch work until resumed. Manual run requests (`run_implementation_once`, `run_review_once`) are rejected in this state. |
 | `error` | Unexpected failure. Last error is captured and reported. |
 
 ### Rust Module (`apps/desktop/src-tauri/src/scheduler.rs`)
 
 - Thread-safe global `SCHEDULER` singleton via `LazyLock<Mutex<Scheduler>>`.
-- `SchedulerStatus` struct: state, lastTick, tickCount, skippedTicks, lastError.
-- `count_active_processes()`: Scans queue items for `picked`/`started` statuses.
-- `read_max_running_processes()` / `read_implementation_interval()`: Reads from settings.json.
-- `can_launch_work(active, max)`: Capacity check against `maxRunningProcesses`.
-- Uses `list_projects()` and `list_queue()` to filter queue items at the item level: queued or reviewed-fix-request items whose registered project is disabled are skipped individually with durable log entries recorded via `record_skip`. Items belonging to enabled projects are eligible for dispatch decisions. Global enabled-project count is not used as the sole dispatch gate.
+- `start_automation` starts the scheduler and ensures one background capacity loop is running. The loop calls a local automation triage helper every `capacityPollIntervalSeconds` while state is `running`. That helper attempts review dispatch before new implementation dispatch so submitted work is handled before more token-spending implementation agents are launched. It idles while `paused` and exits when state becomes `stopped` or `error`.
+- `SchedulerStatus` struct: state, lastTick, tickCount, skippedTicks, implementation active/max/waiting counts, review active/max/waiting counts, lastError.
+- `count_active_processes()`: Scans queue items for active implementation statuses (`picked`, `started`). `stale-started` remains visible in queue/thread state but no longer consumes implementation capacity.
+- `count_active_review_processes()`: Scans queue items for active review status (`reviewing`).
+- `read_max_running_processes()` / `read_implementation_interval()`: Reads from `settings.toml`. `read_max_running_processes()` now resolves implementation capacity using `maxImplementationAgents` with `maxRunningProcesses` as a backward-compatible fallback.
+- `read_max_review_agents()`: Reads `maxReviewAgents` from `settings.toml`, defaulting to `1`.
+- `read_capacity_poll_interval_seconds()`: Reads `capacityPollIntervalSeconds` from `settings.toml`, bounded to 1-60 seconds and defaulting to `5`.
+- `can_launch_work(active, max)`: Capacity check against the relevant implementation or review agent pool.
+- Uses `list_projects()` and `list_queue()` to filter queue items locally at the item level before launching agents: queued, reviewed-fix-request, or submitted items whose registered project is disabled are skipped individually with durable log entries recorded via `record_skip`. Items belonging to enabled projects are eligible for dispatch decisions. Global enabled-project count is not used as the sole dispatch gate.
+- Enabled implementation items are prepared with durable agent thread metadata and a deterministic per-task Git worktree, then transitioned through `picked` to `started`, assigned a `runnerId`, and launched while open implementation capacity remains.
+- Enabled submitted review items reuse the same queue-linked thread/worktree context, transition to `reviewing`, receive a `reviewRunnerId`, and launch while review capacity remains.
+- Enabled submitted review items that cannot launch because the review pool is full remain `submitted` and receive `waitingReason` plus a `review_capacity_waiting` history event; their durable agent thread records mirror the waiting reason for the opened thread UI.
+- Review-passed items that transition to `landing` are finalized by the project landing policy rather than by another scheduler capacity slot. Auto-merge projects attempt landing immediately; approval-required projects remain in `landing` with a pending merge approval request until the user approves it.
+- Before implementation or review capacity is measured, the dispatcher reconciles stale active queue items using `maxPickedMinutes`: stale `picked` reservations return to `queued`; stale `started` items are recovered from completed run metadata when possible, otherwise moved to `stale-started`; stale `reviewing` items are blocked when the review runner exceeds the stale threshold without a usable completion update. Review runners that exit successfully while leaving the queue in `reviewing` are blocked immediately by the runner completion guardrail.
+- Worktree, spawn, and non-zero runner failures are logged and persisted on the queue item instead of silently using the main project checkout or leaving failures in memory only.
+- The local triage helper writes a compact `TRIAGE:` scheduler-log entry summarizing the review and implementation dispatch decisions for each automation loop or tray "Run Once" pass.
+- `bun --filter @brain-loop/desktop scheduler:qa` verifies the source-level scheduler contract for capacity settings, the running capacity loop, review-first local triage, implementation pool dispatch, review pool dispatch, direct implementation-to-review handoff, worktree-backed thread context, and main-checkout warning.
+
+### Capacity Settings
+
+`settings.toml` currently supports:
+
+| Field | Purpose | Default |
+|-------|---------|---------|
+| `maxLoopPolicy.globalMax` | Global hard ceiling for implementation agents. | `1` |
+| `maxLoopPolicy.runnerCaps` | Optional implementation caps by runner id. | Empty |
+| `maxLoopPolicy.projectCaps` | Optional implementation caps by project id. | Empty |
+| `maxLoopPolicy.runnerProjectCaps` | Optional implementation caps by project id and runner id. | Empty |
+| `maxImplementationAgents` | Maximum implementation agents allowed at once. | Falls back to `maxRunningProcesses`, then `1`. |
+| `maxReviewAgents` | Maximum review agents allowed at once. | `1` |
+| `capacityPollIntervalSeconds` | Running automation loop cadence for checking open capacity and waiting queue work. | `5` |
+| `maxRunningProcesses` | Legacy implementation capacity field retained for compatibility. | `1` |
+| `maxPickedMinutes` | Stale reservation/run reconciliation threshold for active queue work. | `30` |
+| `schedulingPolicy` | Implementation candidate order: `fix-before-new-task` or `fifo`. | `fix-before-new-task` |
+
+Implementation dispatch sorts candidates by `schedulingPolicy`, checks task dependencies, applies `maxLoopPolicy.globalMax` as a hard ceiling, then checks runner, project, and runner-project active caps for each candidate item. A candidate blocked by dependencies receives `waitingReason`, `blockedBy`, and a `dependency_waiting` history event. A candidate blocked by MaxLoop receives a durable `waitingReason` and `maxloop_waiting` history event. Review candidates blocked by `maxReviewAgents` receive a durable `waitingReason` and `review_capacity_waiting` history event. Dispatch continues scanning later eligible items.
 
 ### Tauri Commands
 
@@ -41,16 +73,33 @@ Controls background implementation and review automation ticks while respecting 
 | `stop_automation` | Sets scheduler to stopped |
 | `get_scheduler_status` | Returns full scheduler status |
 | `run_implementation_once` | Fires one implementation tick with capacity check |
-| `run_review_once` | Fires one review tick |
+| `run_review_once` | Fires one review tick with review capacity check |
 
 ### Tray Menu
 
-- "Run Once" → starts scheduler + records tick.
+- "Run Once" → starts scheduler, attempts review dispatch first, then implementation dispatch.
 - "Pause Automation" → pauses scheduler.
 
 ### Dashboard Invalidation
 
 Scheduler state changes emit UI events via `get_scheduler_status` polling.
+
+### Settings Surface
+
+- Scheduler state, start/pause controls, one-shot implementation/review actions, capacity poll interval, maximum implementation agents, maximum review agents, MaxLoop cap controls, and FIFO/fix-before-new-task scheduling policy are represented in the Codex-style Settings page under `Automation`.
+- Runner/model defaults are represented in Settings > Agents. Implementation launches resolve the configured model for the queue item's runner, and review launches use the configured default review runner/model while preserving queue-linked worktree context.
+
+### Runner And Model Settings
+
+`settings.toml` supports a global runner catalog:
+
+| Field | Purpose |
+|-------|---------|
+| `runnerCatalog` | Supported runner entries with `id`, `label`, `enabled`, `models`, and `defaultModel`. |
+| `defaultImplementationRunner` / `defaultImplementationModel` | Global default implementation runner/model. |
+| `defaultReviewRunner` / `defaultReviewModel` | Global default review runner/model. |
+
+The settings command validator prevents disabled runners from being saved as role defaults and requires selected models to exist in the selected runner's model list.
 
 ### Notifications
 

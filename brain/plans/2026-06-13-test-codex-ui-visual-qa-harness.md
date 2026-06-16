@@ -4,7 +4,7 @@
 Test
 
 ## Status
-Proposed
+Done
 
 ## Created Date
 2026-06-13
@@ -49,7 +49,16 @@ Add a repeatable visual QA path for the desktop web surface using the project’
 ## Test Plan
 - `bun --filter @brain-loop/desktop typecheck`
 - `bun --filter @brain-loop/desktop build`
-- TODO: final visual QA command once harness location is chosen.
+- `bun --filter @brain-loop/desktop visual:qa`
+
+## Implementation Progress
+
+- Added `apps/desktop/scripts/codex-visual-qa.mjs` as a zero-dependency Codex UI visual QA gate.
+- Added `bun --filter @brain-loop/desktop visual:qa`.
+- The command checks built output plus source invariants for the headless shell, fixed top sidebar actions, flat title-only thread rows, dark-first background, opened thread chat surface, persisted timeline rendering, and long artifact/transcript wrapping.
+- Generated reports are written to `apps/desktop/visual-qa/codex-ui-report.json` and ignored by Git.
+- Removed unused legacy light scaffold CSS that could reintroduce white dashboard/sidebar surfaces.
+- Browser screenshot capture and pixel/overlap checks remain a future enhancement when Playwright or another browser automation dependency is available. The v1 harness provides the documented repeatable visual verification command required by UI task plans.
 
 ## Brain Update Requirements
 - Update `brain/engineering/coding-standards.md`.
@@ -76,7 +85,7 @@ Lower agent must report:
 - Tauri-specific behavior may not be fully covered in browser-only visual tests; keep manual desktop smoke checks until native automation is available.
 
 ## Open Questions
-- TODO: Confirm whether the project will use Playwright or an existing visual test runner.
+- None for v1. The current zero-dependency harness is the accepted visual QA gate until browser automation is added.
 
 ## Linked Task
 - Task Title: Add Codex UI Visual QA Harness

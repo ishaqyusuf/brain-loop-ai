@@ -65,6 +65,12 @@ fn make_log_name(run_id: &str, queue_item_id: &Option<String>, project_id: &Opti
     format!("{}.log", parts.join("_"))
 }
 
+fn sync_thread_from_queue_item(item: &crate::brain::QueueItem) {
+    if let Ok(value) = serde_json::to_value(item) {
+        let _ = crate::agent_thread::upsert_from_queue_value(&value);
+    }
+}
+
 #[tauri::command]
 pub fn run_process(
     app: AppHandle,
@@ -127,6 +133,15 @@ pub fn run_process(
                 error: None,
             };
             let _ = std::fs::write(&meta_path, serde_json::to_string(&initial_meta).unwrap());
+            if let Some(qid) = &queue_item_id {
+                let log_file_path = log_path.to_string_lossy();
+                let _ = crate::agent_thread::upsert_run_log_path(
+                    qid,
+                    &run_id,
+                    agent.as_deref(),
+                    log_file_path.as_ref(),
+                );
+            }
 
             let app_clone = app.clone();
             let run_id_clone = run_id.clone();
@@ -183,6 +198,70 @@ pub fn run_process(
 
                 let _ = std::fs::write(&meta_path, serde_json::to_string(&initial_meta).unwrap());
 
+                if exit_code.unwrap_or(1) != 0 {
+                    if let Some(qid) = &initial_meta.queue_item_id {
+                        if let Ok(Some(mut item)) = crate::brain::read_queue_item(qid) {
+                            if item.status == "started" || item.status == "reviewing" {
+                                let detail = format!(
+                                    "Runner exited with non-zero status: {}",
+                                    exit_code
+                                        .map(|code| code.to_string())
+                                        .unwrap_or_else(|| "unknown".to_string())
+                                );
+                                item.last_error = Some(detail.clone());
+                                let _ = crate::brain::update_queue_item_status(
+                                    &mut item,
+                                    "blocked",
+                                    "runner",
+                                    Some(&detail),
+                                    Some("runner_exit_failed"),
+                                    Some(&detail),
+                                );
+                                let _ = crate::brain::write_queue_item(&item);
+                                sync_thread_from_queue_item(&item);
+                            }
+                        }
+                    }
+                } else if let Some(qid) = &initial_meta.queue_item_id {
+                    if let Ok(Some(mut item)) = crate::brain::read_queue_item(qid) {
+                        let mut should_request_review = item.status == "submitted";
+                        if item.status == "started" {
+                            let detail = "Implementation runner exited successfully.";
+                            let _ = crate::brain::update_queue_item_status(
+                                &mut item,
+                                "submitted",
+                                "runner",
+                                Some(detail),
+                                Some("runner_completed"),
+                                Some(detail),
+                            );
+                            let _ = crate::brain::write_queue_item(&item);
+                            sync_thread_from_queue_item(&item);
+                            should_request_review = true;
+                        } else if item.status == "reviewing" {
+                            let detail = "Review runner exited successfully but left queue item in reviewing; review result was not written. Manual reconciliation is required.";
+                            item.last_error = Some(detail.to_string());
+                            item.waiting_reason = None;
+                            let _ = crate::brain::update_queue_item_status(
+                                &mut item,
+                                "blocked",
+                                "runner",
+                                Some(detail),
+                                Some("review_runner_missing_result"),
+                                Some(detail),
+                            );
+                            let _ = crate::brain::write_queue_item(&item);
+                            sync_thread_from_queue_item(&item);
+                        } else if item.status == "landing" {
+                            let _ = crate::landing::apply_landing_policy(&app, &item);
+                        }
+
+                        if should_request_review {
+                            let _ = crate::run_review_once(app.clone());
+                        }
+                    }
+                }
+
                 let _ = app.emit("process-complete", ProcessCompleteEvent {
                     run_id,
                     exit_code,
@@ -210,6 +289,15 @@ pub fn run_process(
                 error: Some(error_msg.clone()),
             };
             let _ = std::fs::write(&meta_path, serde_json::to_string(&meta).unwrap());
+            if let Some(qid) = &queue_item_id {
+                let log_file_path = log_path.to_string_lossy();
+                let _ = crate::agent_thread::upsert_run_log_path(
+                    qid,
+                    &run_id,
+                    agent.as_deref(),
+                    log_file_path.as_ref(),
+                );
+            }
 
             if let Some(qid) = &queue_item_id {
                 if let Ok(Some(mut item)) = crate::brain::read_queue_item(qid) {
@@ -222,6 +310,7 @@ pub fn run_process(
                         Some(&error_msg),
                     );
                     let _ = crate::brain::write_queue_item(&item);
+                    sync_thread_from_queue_item(&item);
                 }
             }
 

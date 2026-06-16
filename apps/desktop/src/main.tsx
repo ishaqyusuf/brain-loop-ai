@@ -2,7 +2,10 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { App } from "./app";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { applyThemePreference, loadThemePreference } from "@/lib/theme";
 import "./styles.css";
+
+applyThemePreference(loadThemePreference());
 
 class RenderBoundary extends React.Component<
   { children: React.ReactNode },

@@ -4,13 +4,13 @@
 Feature
 
 ## Status
-Proposed
+Done
 
 ## Created Date
 2026-06-12
 
 ## Last Updated
-2026-06-12
+2026-06-15
 
 ## Intake
 - Intake File: brain/intake/2026-06-12-loop-product-settings.md
@@ -20,17 +20,17 @@ Proposed
 Give users precise control over how many automation threads may run globally, per runner, per project, and per runner/project combination.
 
 ## Current Context
-Current settings include `maxRunningProcesses`. User wants richer MaxLoop behavior: global hard cap, runner-specific cap, project-specific cap, and runner-per-project overrides.
+Current settings include legacy `maxRunningProcesses`, capacity-specific implementation/review agent caps, and a first persisted MaxLoop policy. User wants richer MaxLoop behavior: global hard cap, runner-specific cap, project-specific cap, and runner-per-project overrides.
 
 ## Proposed Approach
 Define a hierarchical concurrency policy where specific overrides win over general defaults, then add settings UI and scheduler enforcement.
 
 ## Implementation Steps
-- Define MaxLoop settings schema with scopes: global, runner, project, runnerProject.
-- Document precedence rules and disabled/zero semantics.
-- Update scheduler selection logic to respect every active cap.
-- Add settings UI for global defaults and per-project overrides.
-- Add queue/dashboard indicators when tasks are waiting on concurrency.
+- Define MaxLoop settings schema with scopes: global, runner, project, runnerProject. (Started: `maxLoopPolicy` is now in the shared settings contract.)
+- Document precedence rules and disabled/zero semantics. (Started: caps must be positive; global remains the hard ceiling; runner/project/runner-project caps are enforced when configured.)
+- Update scheduler selection logic to respect every active cap. (Started for implementation dispatch.)
+- Add settings UI for global defaults and per-project overrides. (Started in Settings > Automation.)
+- Add queue/dashboard indicators when tasks are waiting on concurrency. (Started with durable `waitingReason` and Queue warning/detail display.)
 
 ## Affected Files Or Areas
 - `brain/features/background-scheduler.md`
@@ -41,10 +41,19 @@ Define a hierarchical concurrency policy where specific overrides win over gener
 - `packages/brain-core/src/index.ts`
 
 ## Acceptance Criteria
-- MaxLoop policy supports global, runner, project, and runner-project scopes.
-- Scheduler cannot exceed the most specific active cap.
-- UI explains why a task is waiting when concurrency blocks it.
-- Per-project overrides can differ from global defaults.
+- MaxLoop policy supports global, runner, project, and runner-project scopes. (Implemented for implementation agents.)
+- Scheduler cannot exceed the most specific active cap. (Implemented as global hard ceiling plus runner/project/runner-project active cap checks.)
+- UI explains why a task is waiting when concurrency blocks it. (Implemented through queue `waitingReason`, warning badge, and queue detail metadata.)
+- Per-project overrides can differ from global defaults. (Implemented in persisted settings and Settings > Automation controls.)
+
+## Current Implementation Notes
+
+- `settings.maxLoopPolicy.globalMax` is the implementation-agent hard ceiling and is also reflected in scheduler capacity status when lower than `maxImplementationAgents`.
+- `runnerCaps`, `projectCaps`, and `runnerProjectCaps` are enforced during implementation dispatch. Each active cap can block a candidate item; blocked candidates receive a durable `waitingReason` and `maxloop_waiting` history event.
+- The dispatcher continues scanning eligible items after a policy skip, so a task blocked by one runner/project cap does not prevent a later eligible task from launching if it fits the remaining active caps.
+- Review concurrency remains governed by `maxReviewAgents`; MaxLoop policy currently applies to implementation agents.
+- Cargo-based Rust tests remain blocked until the host has a Rust toolchain.
+- Added `bun --filter @brain-loop/desktop scheduler:qa` coverage for MaxLoop/capacity dispatch invariants that can be verified without Cargo.
 
 ## Test Plan
 - Rust unit tests or table tests for concurrency policy evaluation.

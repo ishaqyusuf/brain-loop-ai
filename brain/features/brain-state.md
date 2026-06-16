@@ -2,33 +2,40 @@
 
 ## Purpose
 
-Brain Loop reads and safely mutates the global Brain project manager files while keeping JSON as the durable source of truth.
+Brain Loop reads and safely mutates the global Brain Loop state root while keeping settings in TOML and operational records in JSON.
+
+The state model is part of the product's opinionated open-source stance: users and contributors should be able to inspect, back up, fork, or repair Brain Loop state without a hosted service or hidden database.
 
 ## Scope
 
-- `~/.codex/brain-project-manager/settings.json`
-- `~/.codex/brain-project-manager/projects.json`
-- `~/.codex/brain-project-manager/queues/handoffs/*.json`
-- `~/.codex/brain-project-manager/locks/`
-- `~/.codex/brain-project-manager/logs/`
+- `~/.brain-loop/settings.toml`
+- `~/.brain-loop/projects.json`
+- `~/.brain-loop/approvals.json`
+- `~/.brain-loop/workspaces.json`
+- `~/.brain-loop/queues/handoffs/*.json`
+- `~/.brain-loop/threads/*.json`
+- `~/.brain-loop/locks/`
+- `~/.brain-loop/logs/`
 
 ## Implemented Behavior (Read-Only)
 
-- Rust resolves the global manager root from the user's home directory (`~/.codex/brain-project-manager/`).
+- Rust resolves the global manager root from the user's home directory (`~/.brain-loop/`).
+- On startup or command access, Rust prepares the new root and migrates legacy non-worktree state from `~/.codex/brain-project-manager` when the new files/directories are missing. Legacy `settings.json` is converted to `settings.toml`; legacy Git worktrees are not copied or moved.
 - Rust read-helpers tolerate missing files or malformed files gracefully without crashes.
 - Exposes commands for:
   - `get_brain_status`: returns merged dispatcher status and counts of queued, active, submitted, and blocked queue items.
   - `list_projects`: parses and returns the active project lists.
-  - `list_queue`: reads all queue handoffs and returns `{ items, errors }`; valid items are sorted by priority (high -> medium -> low) and oldest creation date, while malformed or unreadable files are reported without breaking the full list.
+  - `list_queue`: reads all queue handoffs and returns `{ items, errors }`; valid items are sorted by priority (high -> medium -> low) and oldest creation date, while malformed or unreadable files are reported without breaking the full list. Older queue files without `taskName` get a generated display fallback from their handoff/plan path or id.
   - `list_recent_logs`: lists recent runner log summaries.
 - `packages/desktop-client` wraps these Tauri invoke interfaces in typed TypeScript functions.
 - Queue read errors include file name, path, and parse/read message so React can surface malformed queue files.
 
 ## Implemented Behavior (Mutations)
 
-- `src/state.rs`: Centralized path resolution for `~/.codex/brain-project-manager/` and its subdirectories (queues/handoffs, locks, logs).
-- `src/atomic.rs`: Atomic JSON write helper — writes to a temp file in the target directory, flushes, then renames. Generates UTC ISO 8601 timestamps.
+- `src/state.rs`: Centralized path resolution for `~/.brain-loop/`, migration from the legacy `.codex` root, and subdirectories (queues/handoffs, locks, logs, threads, worktrees).
+- `src/atomic.rs`: Atomic JSON/TOML write helpers — write to a temp file in the target directory, flush, then rename. Generates UTC ISO 8601 timestamps.
 - `src/lock.rs`: Lock management — acquire (creates lock file atomically, fails if already held), release (removes file), is_locked (file existence check).
+- `src/approval.rs`: Durable approval broker state — loads and atomically writes `approvals.json` for approval request lifecycle events.
 - `src/brain.rs`: Core mutation logic —
   - `QueueItem`/`QueueHistoryEntry` Rust structs with serde camelCase field mapping.
   - `update_queue_item_status`: Validates current and new statuses, checks transition is allowed, updates status-specific timestamps, appends a history entry.

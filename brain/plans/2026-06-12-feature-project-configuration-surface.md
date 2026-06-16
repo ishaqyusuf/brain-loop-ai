@@ -17,7 +17,7 @@ Done
 - Intake Item: Project phase 32-40%
 
 ## Goal Or Problem
-Let users inspect, enable, disable, prioritize, and validate projects registered in `~/.codex/brain-project-manager/projects.json`.
+Let users inspect, enable, disable, prioritize, and validate projects registered in `~/.brain-loop/projects.json`.
 
 ## Current Context
 Project registration is central to handoff queue eligibility. The app should expose it safely without breaking the JSON contract.

@@ -17,7 +17,7 @@ User requested that the UI should follow the Codex standard, with the supplied C
 - [ ] Build Codex-Style Thread Workspace - `brain/plans/2026-06-13-ux-ui-codex-thread-workspace.md` - Status: Proposed
 - [ ] Build Codex Environment And Changes Panel - `brain/plans/2026-06-13-ux-ui-codex-environment-changes-panel.md` - Status: Proposed
 - [ ] Build Codex Artifact And Change Summary Cards - `brain/plans/2026-06-13-ux-ui-codex-artifact-change-cards.md` - Status: Proposed
-- [ ] Add Codex UI Visual QA Harness - `brain/plans/2026-06-13-test-codex-ui-visual-qa-harness.md` - Status: Proposed
+- [x] Add Codex UI Visual QA Harness - `brain/plans/2026-06-13-test-codex-ui-visual-qa-harness.md` - Status: Done
 
 ## Recommended Execution Order
 1. Define Codex UI Standard And Visual Contract - establishes the shared UI rules every other UI task must follow.

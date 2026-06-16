@@ -1,11 +1,22 @@
 <svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect width="1024" height="1024" rx="256" fill="#111318"/>
-  <path d="M512 176C352 96 160 224 160 448C160 576 240 672 368 688C240 784 320 928 496 928C624 928 704 832 672 720C816 704 912 592 880 448C848 240 672 96 512 176C688 272 688 464 512 560C336 656 352 832 512 928" stroke="url(#brain-loop-stroke)" stroke-width="72" stroke-linecap="round" stroke-linejoin="round"/>
+  <g transform="translate(92 92) scale(0.8203125)">
+  <rect width="1024" height="1024" rx="233" fill="#FFFFFF"/>
+  <rect x="4" y="4" width="1016" height="1016" rx="229" stroke="#DFE2E5" stroke-width="8"/>
+
+  <path d="M344 333H259V418" stroke="#17191D" stroke-width="63" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M680 333H765V418" stroke="#17191D" stroke-width="63" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M344 691H259V606" stroke="#17191D" stroke-width="63" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M680 691H765V606" stroke="#17191D" stroke-width="63" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <rect x="390" y="390" width="244" height="244" rx="74" fill="url(#focus-frame-accent)"/>
+  <circle cx="512" cy="512" r="34" fill="#FFFFFF"/>
+  </g>
+
   <defs>
-    <linearGradient id="brain-loop-stroke" x1="224" x2="800" y1="192" y2="928" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#BEEBFF"/>
-      <stop offset="0.45" stop-color="#9DE2FF"/>
-      <stop offset="1" stop-color="#5AA7FF"/>
+    <linearGradient id="focus-frame-accent" x1="245" x2="814" y1="239" y2="853" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#17191D"/>
+      <stop offset="0.62" stop-color="#1D6268"/>
+      <stop offset="1" stop-color="#5FB9A4"/>
     </linearGradient>
   </defs>
 </svg>

@@ -4,7 +4,7 @@
 Investigation
 
 ## Status
-Proposed
+Done
 
 ## Created Date
 2026-06-12
@@ -50,6 +50,14 @@ Create a product terminology decision that evaluates names and chooses the canon
 - Documentation review.
 - `rg -n " app |apps|runner|provider|executor|Loop|Brain Loop|O-Loop|C-Loop" brain README.md`
 
+## Implementation Progress
+
+- Accepted `Brain Loop` as the v1 product name.
+- Accepted `runner` as the user-facing term for automation tools such as OpenCode, Antigravity, Codex, and future Claude support.
+- Reserved `runner adapter` for integration code and `provider` for lower-level model/API providers behind a runner.
+- Added ADR `brain/decisions/2026-06-15-product-name-runner-terminology.md`.
+- Updated README, product positioning, product vision, system overview, and architecture docs.
+
 ## Brain Update Requirements
 - Update product docs and architecture docs.
 - Add ADR if final terminology is accepted.
@@ -75,8 +83,7 @@ Lower agent must report:
 - Naming may need one user confirmation after candidates are compared.
 
 ## Open Questions
-- TODO: Final product name.
-- TODO: Final replacement term for "app".
+- None. Future branding changes should create a new ADR and migration checklist.
 
 ## Linked Task
 - Task Title: Decide Product Name And Runner Terminology

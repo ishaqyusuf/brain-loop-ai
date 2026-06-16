@@ -4,13 +4,13 @@
 UX/UI
 
 ## Status
-Proposed
+In Progress
 
 ## Created Date
 2026-06-12
 
 ## Last Updated
-2026-06-12
+2026-06-15
 
 ## Intake
 - Intake File: brain/intake/2026-06-12-loop-product-settings.md
@@ -24,6 +24,15 @@ Approval broker plans already cover approval request cards. User specifically wa
 
 ## Proposed Approach
 Add thread-level permission-required indicators, notification sound behavior, and visible state badges tied to approval requests.
+
+## Implementation Notes
+
+- App-level approval state now tracks pending approval requests from `list_approval_requests` and live approval events.
+- The fixed Approval sidebar action and queue-linked thread rows show a compact red flag when pending approval requests exist.
+- Opened thread views show a destructive permission-required alert with an `Open approvals` action that jumps to approval cards.
+- A short Web Audio cue plays once per new pending approval request when approval notifications and permission-required sound are enabled.
+- Settings > Permissions & Approvals includes a real `Permission-required sound` toggle. The toggle is disabled when approval notifications are disabled.
+- Red flags clear automatically because UI indicators derive only from pending approval requests; resolved approval events update the tracked request state.
 
 ## Implementation Steps
 - Define a thread/run state for permission required.

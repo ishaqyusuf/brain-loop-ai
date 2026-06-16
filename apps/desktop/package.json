@@ -10,13 +10,14 @@
     "tauri": "tauri",
     "tauri:dev": "PATH=\"$HOME/.cargo/bin:$PATH\" tauri dev",
     "tauri:build": "PATH=\"$HOME/.cargo/bin:$PATH\" tauri build",
+    "visual:qa": "bun scripts/codex-visual-qa.mjs",
+    "scheduler:qa": "bun scripts/scheduler-contract-qa.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
     "@brain-loop/brain-core": "workspace:*",
     "@brain-loop/desktop-client": "workspace:*",
-    "@fontsource-variable/geist": "^5.2.9",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-dialog": "^2.0.0",
     "@tauri-apps/plugin-fs": "^2.0.0",

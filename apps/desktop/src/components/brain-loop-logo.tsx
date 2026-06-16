@@ -9,31 +9,60 @@ export function BrainLoopLogo({ className, size = 36 }: BrainLoopLogoProps) {
       aria-hidden="true"
       className={className}
       height={size}
-      viewBox="0 0 64 64"
       width={size}
+      viewBox="0 0 1024 1024"
       xmlns="http://www.w3.org/2000/svg"
     >
-      <rect fill="#111318" height="64" rx="16" width="64" />
-      <path
-        d="M32 11c-10-5-22 3-22 17 0 8 5 14 13 15-8 6-3 15 8 15 8 0 13-6 11-13 9-1 15-8 13-17-2-13-13-22-23-17 11 6 11 18 0 24s-10 17 0 23"
-        fill="none"
-        stroke="url(#brain-loop-stroke)"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="4.5"
-      />
+      <g transform="translate(92 92) scale(0.8203125)">
+        <rect fill="#FFFFFF" height="1024" rx="233" width="1024" />
+        <rect fill="none" height="1016" rx="229" stroke="#DFE2E5" strokeWidth="8" width="1016" x="4" y="4" />
+        <path
+          d="M344 333H259V418"
+          fill="none"
+          stroke="#17191D"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth="63"
+        />
+        <path
+          d="M680 333H765V418"
+          fill="none"
+          stroke="#17191D"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth="63"
+        />
+        <path
+          d="M344 691H259V606"
+          fill="none"
+          stroke="#17191D"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth="63"
+        />
+        <path
+          d="M680 691H765V606"
+          fill="none"
+          stroke="#17191D"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth="63"
+        />
+        <rect fill="url(#focus-frame-accent)" height="244" rx="74" width="244" x="390" y="390" />
+        <circle cx="512" cy="512" fill="#FFFFFF" r="34" />
+      </g>
       <defs>
         <linearGradient
           gradientUnits="userSpaceOnUse"
-          id="brain-loop-stroke"
-          x1="14"
-          x2="50"
-          y1="12"
-          y2="58"
+          id="focus-frame-accent"
+          x1="245"
+          x2="814"
+          y1="239"
+          y2="853"
         >
-          <stop stopColor="#BEEBFF" />
-          <stop offset="0.45" stopColor="#9DE2FF" />
-          <stop offset="1" stopColor="#5AA7FF" />
+          <stop stopColor="#17191D" />
+          <stop offset="0.62" stopColor="#1D6268" />
+          <stop offset="1" stopColor="#5FB9A4" />
         </linearGradient>
       </defs>
     </svg>

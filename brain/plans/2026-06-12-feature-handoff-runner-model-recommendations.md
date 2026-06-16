@@ -4,13 +4,13 @@
 Feature
 
 ## Status
-Proposed
+In Progress
 
 ## Created Date
 2026-06-12
 
 ## Last Updated
-2026-06-12
+2026-06-15
 
 ## Intake
 - Intake File: brain/intake/2026-06-12-loop-product-settings.md
@@ -20,17 +20,17 @@ Proposed
 Extend handoffs and queue items so each implementation packet recommends both a runner and a model.
 
 ## Current Context
-Brain handoff currently recommends exactly one agent such as `open-code` or `antigravity`. User wants the handoff to suggest both the automation tool and model.
+Brain handoff currently recommends exactly one agent such as `open-code` or `antigravity`. User wants the handoff to suggest both the automation tool and model. The app now has runner/model catalog settings that can provide fallback model recommendations for older queue items.
 
 ## Proposed Approach
 Update the handoff template, queue item contract, planner guidance, and settings integration so each handoff includes recommended runner and recommended model.
 
 ## Implementation Steps
 - Use final terminology from the naming plan.
-- Add `recommendedModel` and model recommendation reason fields to the queue contract.
-- Update handoff template sections for runner/model recommendation.
-- Teach planning/handoff generation to select defaults from runner/model settings.
-- Preserve compatibility with queue items that only have `recommendedAgent`.
+- Add `recommendedModel` and model recommendation reason fields to the queue contract. (Implemented as optional `recommendedModel` and `modelRecommendationReason` fields.)
+- Update handoff template sections for runner/model recommendation. (Started with `brain/templates/handoff-runner-model-recommendation.md`.)
+- Teach planning/handoff generation to select defaults from runner/model settings. (Started in app queue reads: missing `recommendedModel` is derived from runner/model settings for display.)
+- Preserve compatibility with queue items that only have `recommendedAgent`. (Implemented through optional fields and read-side fallback.)
 
 ## Affected Files Or Areas
 - `brain/api/contracts.md`
@@ -41,10 +41,19 @@ Update the handoff template, queue item contract, planner guidance, and settings
 - handoff generation scripts or skills if they live in repo
 
 ## Acceptance Criteria
-- New handoffs include runner/tool and model recommendation.
-- Queue items can store recommended model while remaining backward-compatible.
-- Default review runner/model is used when creating review handoffs.
-- Docs avoid the ambiguous term "app" after terminology decision.
+- New handoffs include runner/tool and model recommendation. (Template guidance added; external skill/generator updates may still be needed.)
+- Queue items can store recommended model while remaining backward-compatible. (Implemented.)
+- Default review runner/model is used when creating review handoffs. (Review launch already uses configured default review runner/model; explicit review handoff generation remains external.)
+- Docs avoid the ambiguous term "app" after terminology decision. (Partially deferred to product terminology plan.)
+
+## Current Implementation Notes
+
+- `QueueItem` accepts optional `recommendedModel` and `modelRecommendationReason`.
+- `list_queue` derives missing recommendation fields from `settings.runnerCatalog` and implementation defaults for display without rewriting older queue files.
+- Implementation launch prefers queue `recommendedModel` over the runner/model settings default.
+- Implementation and review prompts include recommended runner/model metadata.
+- Queue details show recommended runner/model and model recommendation reason.
+- In-repo handoff generation was not found; a reusable Brain template section was added for future producers.
 
 ## Test Plan
 - Contract/schema tests if implemented.

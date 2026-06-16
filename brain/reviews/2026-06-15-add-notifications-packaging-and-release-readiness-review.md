@@ -24,7 +24,7 @@ Approved
 ## Acceptance Criteria
 
 - Key automation events can notify the user without overwhelming them: Pass. Notifications are category-gated and transition-based.
-- Production desktop build completes or has documented blockers: Pass with documented blockers. Production build was not run in this fast-command pass.
+- Production desktop build completes or has documented blockers: Pass. The desktop web production build completed; native Tauri packaging remains blocked by missing Cargo on this host and is documented in README.
 - README documents installation, development, and release smoke tests: Pass.
 - Brain docs reflect final MVP/next status: Pass.
 
@@ -36,7 +36,11 @@ No blocking findings.
 
 - Targeted source inspection: pass.
 - `git diff --check`: pass.
-- Full typecheck, desktop build, Tauri build, and manual smoke tests were not run under fast monorepo command discipline.
+- `bun --filter @brain-loop/desktop typecheck`: pass.
+- `bun run typecheck`: pass.
+- `bun --filter @brain-loop/desktop build`: pass, with Vite chunk-size warning only.
+- `cargo --version`: blocked; Cargo is not installed on this host, so native Tauri packaging was not run.
+- Manual smoke tests were not run in this automation wake.
 
 ## Residual Risk
 

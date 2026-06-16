@@ -33,6 +33,14 @@ Implement explicit one-shot dispatch commands and UI actions that select eligibl
 - Add UI actions with confirmation and clear disabled states.
 - Do not run background loops in this phase.
 
+## Implementation Progress
+
+- `run_implementation_once` now starts eligible implementation work through the auditable process runner instead of only reporting a tick.
+- Implementation dispatch prepares queue-linked worktree/thread context, transitions items through `picked` to `started`, assigns `runnerId`, and launches `opencode`, `agy`, or Codex based on the queue item agent.
+- `run_review_once` now starts submitted review work by transitioning items to `reviewing`, assigning `reviewRunnerId`, and launching Codex review.
+- Spawn failures and non-zero runner exits block active queue items with durable log metadata and `lastError`.
+- Remaining: end-to-end manual smoke with real runner success, and richer UI disabled-state explanations.
+
 ## Affected Files Or Areas
 - `apps/desktop/src-tauri/src`
 - `packages/desktop-client/src/index.ts`

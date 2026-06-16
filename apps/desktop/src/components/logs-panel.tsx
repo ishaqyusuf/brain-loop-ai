@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from "react";
 import { onProcessLog, readLogFile, listRecentLogs } from "@brain-loop/desktop-client";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
+import { Empty, EmptyDescription, EmptyTitle } from "@/components/ui/empty";
 
 export function LogsPanel() {
   const [logs, setLogs] = useState<{ 
@@ -58,16 +59,22 @@ export function LogsPanel() {
         </div>
         <ScrollArea className="flex-1 w-full">
           {logs.length === 0 ? (
-            <div className="p-4 text-sm text-muted-foreground">No logs found.</div>
+            <div className="p-3">
+              <Empty>
+                <EmptyTitle>No logs found</EmptyTitle>
+                <EmptyDescription>Run transcripts appear here after automation starts.</EmptyDescription>
+              </Empty>
+            </div>
           ) : (
             <div className="p-2 space-y-1">
               {logs.map((log) => (
-                <button
+                <Button
+                  variant="ghost"
                   key={log.fileName}
                   type="button"
                   onClick={() => setSelectedFile(log.fileName)}
-                  className={`w-full flex flex-col items-start gap-1 p-3 rounded-md text-left transition-colors hover:bg-muted ${
-                    selectedFile === log.fileName ? "bg-muted font-medium" : "text-muted-foreground"
+                  className={`h-auto w-full flex-col items-start gap-1 rounded-md border-0 p-3 text-left whitespace-normal hover:bg-muted ${
+                    selectedFile === log.fileName ? "bg-muted font-medium text-foreground" : "text-muted-foreground"
                   }`}
                 >
                   <span className="text-sm truncate w-full text-foreground">
@@ -77,7 +84,7 @@ export function LogsPanel() {
                     {log.status ? `[${log.status}] ` : ""}
                     {log.queueItemId ? log.queueItemId.replace(".json", "").substring(0, 20) + "..." : log.lastModified}
                   </span>
-                </button>
+                </Button>
               ))}
             </div>
           )}

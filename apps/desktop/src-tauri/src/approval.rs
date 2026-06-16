@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -66,9 +66,29 @@ pub struct ApprovalState {
 impl ApprovalState {
     pub fn new() -> Self {
         Self {
-            requests: Mutex::new(Vec::new()),
+            requests: Mutex::new(load_requests().unwrap_or_default()),
         }
     }
+}
+
+fn load_requests() -> Result<Vec<ApprovalRequest>, String> {
+    crate::state::ensure_state_root()
+        .map_err(|e| format!("Failed to prepare state root for approvals: {}", e))?;
+    let path = crate::state::approvals_path();
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read approvals file: {}", e))?;
+    serde_json::from_str::<Vec<ApprovalRequest>>(&content)
+        .map_err(|e| format!("Failed to parse approvals file: {}", e))
+}
+
+fn write_requests(requests: &[ApprovalRequest]) -> Result<(), String> {
+    crate::state::ensure_state_root()
+        .map_err(|e| format!("Failed to prepare state root for approvals: {}", e))?;
+    crate::atomic::atomic_write_json(&crate::state::approvals_path(), &requests)
+        .map_err(|e| format!("Failed to write approvals file: {}", e))
 }
 
 fn now_iso() -> String {
@@ -91,6 +111,53 @@ fn validate_kind(kind: &str) -> Result<(), String> {
     }
 }
 
+fn approval_summary_for_queue(
+    requests: &[ApprovalRequest],
+    queue_item_id: &str,
+) -> (Vec<String>, usize) {
+    let mut ids = Vec::new();
+    let mut pending = 0usize;
+
+    for request in requests
+        .iter()
+        .filter(|request| request.queue_item_id.as_deref() == Some(queue_item_id))
+    {
+        ids.push(request.id.clone());
+        if request.status == "pending" {
+            pending += 1;
+        }
+    }
+
+    (ids, pending)
+}
+
+fn sync_queue_thread_approval_metadata(
+    requests: &[ApprovalRequest],
+    queue_item_id: Option<&str>,
+) {
+    let Some(queue_item_id) = queue_item_id else {
+        return;
+    };
+    let (ids, pending) = approval_summary_for_queue(requests, queue_item_id);
+    let _ = crate::agent_thread::upsert_approval_metadata(queue_item_id, ids, pending);
+}
+
+fn sync_all_queue_thread_approval_metadata(requests: &[ApprovalRequest]) {
+    let mut queue_ids = Vec::<String>::new();
+    for request in requests {
+        let Some(queue_item_id) = request.queue_item_id.as_ref() else {
+            continue;
+        };
+        if !queue_ids.iter().any(|existing| existing == queue_item_id) {
+            queue_ids.push(queue_item_id.clone());
+        }
+    }
+
+    for queue_item_id in queue_ids {
+        sync_queue_thread_approval_metadata(requests, Some(&queue_item_id));
+    }
+}
+
 #[tauri::command]
 pub fn list_approval_requests(
     state: State<'_, ApprovalState>,
@@ -100,6 +167,7 @@ pub fn list_approval_requests(
         .lock()
         .map_err(|_| "Approval state lock poisoned.".to_string())?
         .clone();
+    sync_all_queue_thread_approval_metadata(&requests);
     requests.sort_by(|a, b| b.requested_at.cmp(&a.requested_at));
     Ok(requests)
 }
@@ -145,11 +213,77 @@ pub fn request_approval(
         }],
     };
 
-    state
+    let mut requests = state
         .requests
         .lock()
-        .map_err(|_| "Approval state lock poisoned.".to_string())?
-        .push(request.clone());
+        .map_err(|_| "Approval state lock poisoned.".to_string())?;
+    let mut next_requests = requests.clone();
+    next_requests.push(request.clone());
+    write_requests(&next_requests)?;
+    *requests = next_requests;
+    sync_queue_thread_approval_metadata(requests.as_slice(), request.queue_item_id.as_deref());
+    drop(requests);
+
+    let _ = app.emit("approval-requested", &request);
+    Ok(request)
+}
+
+pub fn request_merge_approval(
+    app: &AppHandle,
+    item: &crate::brain::QueueItem,
+) -> Result<ApprovalRequest, String> {
+    let state = app.state::<ApprovalState>();
+    let mut requests = state
+        .requests
+        .lock()
+        .map_err(|_| "Approval state lock poisoned.".to_string())?;
+
+    if let Some(existing) = requests.iter().find(|request| {
+        request.status == "pending"
+            && request.queue_item_id.as_deref() == Some(item.id.as_str())
+            && request.command.as_deref() == Some("brain-loop:land-approved-work")
+    }) {
+        return Ok(existing.clone());
+    }
+
+    let now = now_iso();
+    let title = format!("Merge approved work for {}", item.id);
+    let description = format!(
+        "Review passed for {}. Approve this request to land the reviewed work into the registered project checkout.",
+        item.task_name.as_deref().unwrap_or(item.id.as_str())
+    );
+    let request = ApprovalRequest {
+        id: make_id(),
+        kind: "destructive".to_string(),
+        status: "pending".to_string(),
+        title,
+        description,
+        risk: "Landing can commit local checkout changes, merge a task worktree, and update queue approval state.".to_string(),
+        command: Some("brain-loop:land-approved-work".to_string()),
+        path: Some(item.project_path.clone()),
+        queue_item_id: Some(item.id.clone()),
+        project_id: Some(item.project_id.clone()),
+        runner_id: item.review_runner_id.clone().or_else(|| item.runner_id.clone()),
+        session_id: item.session_id.clone(),
+        requested_by: "brain-loop".to_string(),
+        requested_at: now.clone(),
+        resolved_by: None,
+        resolved_at: None,
+        history: vec![ApprovalHistoryEntry {
+            at: now,
+            by: "brain-loop".to_string(),
+            event: "requested".to_string(),
+            note: Some("Review passed; project requires merge approval before landing.".to_string()),
+        }],
+    };
+
+    let mut next_requests = requests.clone();
+    next_requests.push(request.clone());
+    write_requests(&next_requests)?;
+    *requests = next_requests;
+    sync_queue_thread_approval_metadata(requests.as_slice(), request.queue_item_id.as_deref());
+    drop(requests);
+
     let _ = app.emit("approval-requested", &request);
     Ok(request)
 }
@@ -198,27 +332,31 @@ fn resolve_request(
         .requests
         .lock()
         .map_err(|_| "Approval state lock poisoned.".to_string())?;
-    let request = requests
-        .iter_mut()
-        .find(|request| request.id == request_id)
+    let mut next_requests = requests.clone();
+    let request_index = next_requests
+        .iter()
+        .position(|request| request.id == request_id)
         .ok_or_else(|| format!("Approval request not found: {}", request_id))?;
 
-    if request.status != "pending" {
-        return Err(format!("Approval request is already {}.", request.status));
+    if next_requests[request_index].status != "pending" {
+        return Err(format!("Approval request is already {}.", next_requests[request_index].status));
     }
 
     let now = now_iso();
-    request.status = status.to_string();
-    request.resolved_by = Some(by.clone());
-    request.resolved_at = Some(now.clone());
-    request.history.push(ApprovalHistoryEntry {
+    next_requests[request_index].status = status.to_string();
+    next_requests[request_index].resolved_by = Some(by.clone());
+    next_requests[request_index].resolved_at = Some(now.clone());
+    next_requests[request_index].history.push(ApprovalHistoryEntry {
         at: now.clone(),
         by: by.clone(),
         event: status.to_string(),
         note: reason.clone(),
     });
 
-    let resolved = request.clone();
+    let resolved = next_requests[request_index].clone();
+    write_requests(&next_requests)?;
+    *requests = next_requests;
+    sync_queue_thread_approval_metadata(requests.as_slice(), resolved.queue_item_id.as_deref());
     drop(requests);
 
     if status == "denied" || status == "expired" {
@@ -233,6 +371,9 @@ fn resolve_request(
                     Some(&resolved.id),
                 );
                 let _ = crate::brain::write_queue_item(&item);
+                if let Ok(value) = serde_json::to_value(&item) {
+                    let _ = crate::agent_thread::upsert_from_queue_value(&value);
+                }
             }
         }
     }
@@ -245,5 +386,15 @@ fn resolve_request(
     };
     let _ = app.emit(event, &resolved);
     let _ = app.emit("approval-resolved", &resolved);
+
+    if status == "approved"
+        && resolved.command.as_deref() == Some("brain-loop:land-approved-work")
+    {
+        if let Some(queue_item_id) = resolved.queue_item_id.as_deref() {
+            crate::landing::land_queue_item_by_id(queue_item_id, "desktop-user")
+                .map_err(|e| format!("Approval was recorded, but landing failed: {}", e))?;
+        }
+    }
+
     Ok(resolved)
 }

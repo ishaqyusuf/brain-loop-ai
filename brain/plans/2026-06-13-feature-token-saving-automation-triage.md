@@ -4,7 +4,7 @@
 Feature
 
 ## Status
-Proposed
+Done
 
 ## Created Date
 2026-06-13
@@ -60,6 +60,15 @@ Add a scheduler triage function in Rust that reads queue items and relevant run 
 - `bun --filter @brain-loop/desktop typecheck`
 - Manual scheduler check with safe/stub runner commands and sample queue files.
 
+## Implementation Progress
+
+- The background automation loop now performs local queue triage in review-first order: submitted review work is attempted before new queued implementation work.
+- Tray "Run Once" follows the same review-first then implementation order.
+- Extracted a dedicated local automation triage helper used by both the background loop and tray "Run Once" path. The helper records a compact `TRIAGE:` scheduler-log summary after each review/implementation pass.
+- Existing implementation/review dispatch paths already classify queue state locally by status, enabled project, and capacity before launching agents, and record skip/dispatch decisions to durable scheduler logs.
+- Added `bun --filter @brain-loop/desktop scheduler:qa` coverage for the review-first local triage invariant.
+- Fixture-driven Rust tests remain deferred until Cargo is available. The v1 orchestrator choice uses the configured default review runner/model settings.
+
 ## Brain Update Requirements
 - Update `brain/features/background-scheduler.md`.
 - Update `brain/features/automation-runs.md`.
@@ -89,8 +98,7 @@ Lower agent must report:
 - Log metadata and queue history may disagree after crashes; triage should prefer queue status and use logs only as supporting context unless the contract changes.
 
 ## Open Questions
-- TODO: Confirm the final setting/field name for the configured user orchestrator option.
-- TODO: Confirm whether local triage should inspect run log sidecars in addition to queue JSON status/history.
+- None for v1. Local triage uses queue state/status and durable scheduler/run metadata; full log-body inspection can be added later if a contract requires it.
 
 ## Linked Task
 - Task Title: Add Token-Saving Automation Triage

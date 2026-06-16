@@ -13,13 +13,18 @@ Brain Loop is a local macOS desktop orchestrator for the global Brain automation
 The app reads and writes:
 
 ```text
-~/.codex/brain-project-manager/
-  settings.json
+~/.brain-loop/
+  settings.toml
   projects.json
+  approvals.json
   queues/handoffs/*.json
+  threads/*.json
+  worktrees/
   locks/
   logs/
 ```
+
+`settings.toml` is the only TOML state file. Queue items, projects, approvals, threads, locks, workspaces, and run metadata remain JSON for compatibility with Brain automation skills.
 
 ## Initial Product Shape
 
@@ -28,4 +33,3 @@ The app reads and writes:
 - Rust orchestration core.
 - Midday-style monorepo organization.
 - Runners for `opencode`, `agy`, and Codex review.
-

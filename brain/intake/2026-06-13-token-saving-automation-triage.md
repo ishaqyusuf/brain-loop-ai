@@ -13,7 +13,7 @@ Proposed
 When automation runs, save token usage by first doing what can be checked manually/local in code. The automation should inspect task logs or queue state for statuses such as submitted and queued. If submitted work exists, a Codex thread or the configured user orchestrator should run. If queued work exists, the relevant implementation agent should spin off. The goal is to avoid spending tokens on agent orchestration when simple local state inspection can decide the next action.
 
 ## Generated Plans
-- [ ] Add Token-Saving Automation Triage - `brain/plans/2026-06-13-feature-token-saving-automation-triage.md` - Status: Proposed
+- [x] Add Token-Saving Automation Triage - `brain/plans/2026-06-13-feature-token-saving-automation-triage.md` - Status: Done
 
 ## Recommended Execution Order
 1. Add Token-Saving Automation Triage - It builds on the existing scheduler, queue readers, run logs, and manual dispatch work without requiring a broad UI redesign.
@@ -30,8 +30,8 @@ When automation runs, save token usage by first doing what can be checked manual
 - Adjacent but not duplicate: `brain/plans/2026-06-12-feature-task-sequence-scheduling-policy.md` covers FIFO/fix-first/dependency ordering.
 
 ## Needs Clarification
-- TODO: Confirm the exact configurable field name for the user-selected orchestrator option if it should be something other than the current runner/default-agent settings.
-- TODO: Confirm whether "task logs" means only queue item JSON history, run metadata/log sidecars, or both.
+- Resolved for v1: review orchestration uses the configured default review runner/model settings.
+- Resolved for v1: local triage uses queue state/status and durable scheduler/run metadata; full log-body inspection can be added later if a contract requires it.
 
 ## Skipped Items
 - None

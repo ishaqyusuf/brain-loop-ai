@@ -4,7 +4,7 @@
 Docs
 
 ## Status
-Proposed
+Done
 
 ## Created Date
 2026-06-12
@@ -49,6 +49,13 @@ Write product and contributor-facing docs that explain the target user, opiniona
 ## Test Plan
 - Documentation review.
 - `rg -n "open source|opinionated|local-first|runner|provider|Loop" README.md brain`
+
+## Implementation Progress
+
+- Added `brain/product/open-source-positioning.md`.
+- Updated README with open-source direction, opinionated defaults, v1 non-goals, current runner ids, and current Codex-style usage flow.
+- Updated product vision, roadmap, system overview, and Brain state docs with local-first/open-source positioning.
+- No ADR was added because this slice documents decisions already made by existing state-root/settings/worktree/approval contracts.
 
 ## Brain Update Requirements
 - Update README and product docs.

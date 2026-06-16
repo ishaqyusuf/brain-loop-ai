@@ -26,7 +26,7 @@ Create shared TypeScript contracts for Brain project manager settings, projects,
 Define exported types, constants, and validation helpers in `packages/brain-core` that mirror the Brain project manager JSON contract used by existing skills.
 
 ## Implementation Steps
-- Model `settings.json`, `projects.json`, queue item files, queue history entries, runner status values, agents, priorities, locks, and log metadata.
+- Model `settings.toml`, `projects.json`, queue item files, queue history entries, runner status values, agents, priorities, locks, and log metadata.
 - Add parsing/normalization helpers for status, agent, priority, and filesystem paths.
 - Export the public API through `packages/brain-core/src/index.ts`.
 - Add package-level tests if a test runner exists; otherwise add type-level examples or narrow validation coverage.
