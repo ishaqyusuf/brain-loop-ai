@@ -24,7 +24,7 @@ Provide a Codex-standard desktop console for Brain automation control, using sha
 - The All Threads More menu is scoped to thread-list management: Archive all threads, Organize sidebar, and Sort by. Organize supports By Projects, Chronological List, and WorkTree grouping; Sort by supports Created At and Updated At ordering with Codex-style icon rows and selected-state checks.
 - The app shell is dark-first at the root CSS token level so stale light/system theme state does not produce white page backgrounds.
 - The workspace and root shell share the same `#141414` background so the empty home and opened thread surfaces do not show mismatched or white-looking background bands.
-- Sidebar, settings, home, and chat typography were tightened to match the denser Codex conversation-list scale.
+- Sidebar, settings, home, and chat typography keep the dense Codex conversation-list feel while using a readable 14px shell baseline and larger primary labels/messages.
 - The desktop shell uses the Codex/macOS-style system UI font stack through the shared `font-sans` token instead of bundling Geist.
 - The sidebar supports a collapsed state and uses a glass-like dark translucent treatment with blur and restrained borders.
 - The old product menu entries (Overview, Projects, Queue, Runs, Logs, Approvals, Scheduler, Threads) and the main dashboard tab bar were removed from the visible app frame.

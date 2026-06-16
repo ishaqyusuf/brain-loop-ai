@@ -157,7 +157,7 @@ export function Sidebar({
         <div className="flex min-h-0 flex-1 flex-col pl-3 pb-3">
           <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto pr-1">
             <div className={cn("mb-1 flex h-8 shrink-0 items-center gap-2 px-3", collapsed && "hidden")}>
-              <h2 className="min-w-0 flex-1 truncate text-[13px] font-medium leading-none text-zinc-500">
+              <h2 className="min-w-0 flex-1 truncate text-sm font-medium leading-none text-zinc-500">
                 All Threads
               </h2>
               <SidebarHeaderActions
@@ -171,7 +171,7 @@ export function Sidebar({
               />
             </div>
             {threads.length === 0 ? (
-              <div className={cn("rounded-md px-3 py-2 text-xs text-zinc-500", collapsed && "hidden")}>
+              <div className={cn("rounded-md px-3 py-2 text-sm text-zinc-500", collapsed && "hidden")}>
                 Agent threads will appear here.
               </div>
             ) : (
@@ -183,7 +183,7 @@ export function Sidebar({
                 return (
                   <Fragment key={thread.id}>
                     {showGroupLabel && (
-                      <div className="px-3 pb-1 pt-2 text-[11px] font-medium leading-none text-zinc-600">
+                      <div className="px-3 pb-1 pt-2 text-xs font-medium leading-none text-zinc-600">
                         {thread.groupLabel}
                       </div>
                     )}
@@ -204,7 +204,7 @@ export function Sidebar({
                 size="sm"
                 type="button"
                 onClick={() => setVisibleThreadCount((count) => Math.min(count + initialThreadDisplayCount, threads.length))}
-                className="mt-1 h-8 w-full justify-start gap-2 rounded-md border-transparent bg-transparent px-3 text-[13px] font-medium leading-none text-zinc-500 shadow-none hover:bg-white/[0.055] hover:text-zinc-300 focus-visible:bg-white/[0.055]"
+                className="mt-1 h-8 w-full justify-start gap-2 rounded-md border-transparent bg-transparent px-3 text-sm font-medium leading-none text-zinc-500 shadow-none hover:bg-white/[0.055] hover:text-zinc-300 focus-visible:bg-white/[0.055]"
               >
                 <span className="min-w-0 flex-1 truncate text-left">Show more</span>
                 <ChevronDown className="size-3.5 shrink-0" />
@@ -221,7 +221,7 @@ export function Sidebar({
             onClick={onOpenSettings}
             className={cn(
               sidebarGhostButtonClass,
-                "h-8 justify-start gap-3 px-3 text-[12px] font-normal",
+                "h-8 justify-start gap-3 px-3 text-[13px] font-normal",
               collapsed && "justify-center px-0",
             )}
           >
@@ -286,7 +286,7 @@ function SidebarItem({
       onClick={onSelect}
       className={cn(
         sidebarGhostButtonClass,
-        "h-auto min-h-8 justify-start gap-2.5 px-2.5 py-1.5 text-left text-xs font-normal",
+        "h-auto min-h-8 justify-start gap-2.5 px-2.5 py-1.5 text-left text-[13px] font-normal",
         collapsed && "justify-center px-0",
       )}
     >
@@ -296,7 +296,7 @@ function SidebarItem({
             <span className="block truncate font-medium">{item.name}</span>
             <span className="block truncate text-xs text-zinc-500">{item.description}</span>
           </span>
-          <span className="flex shrink-0 items-center gap-1 text-[11px] text-zinc-500">
+          <span className="flex shrink-0 items-center gap-1 text-xs text-zinc-500">
             {item.alert && <PermissionFlag title={item.alert.title} />}
             {item.count}
           </span>
@@ -337,7 +337,7 @@ function ActionSidebarItem({
       onClick={onSelect}
       className={cn(
         sidebarGhostButtonClass,
-        "h-8 justify-start gap-2 px-3 text-left text-[12px] font-normal",
+        "h-8 justify-start gap-2 px-3 text-left text-[13px] font-normal",
         collapsed && "justify-center px-0",
       )}
     >
@@ -451,7 +451,7 @@ function ThreadSidebarItem({
       onClick={onSelect}
       className={cn(
         sidebarGhostButtonClass,
-        "h-[34px] justify-start gap-2 px-3 pr-4 text-left text-[12px] font-normal",
+        "h-[34px] justify-start gap-2 px-3 pr-4 text-left text-[13px] font-normal",
         rowHovered && "pr-14",
         collapsed && "justify-center px-0",
       )}
@@ -460,14 +460,14 @@ function ThreadSidebarItem({
         <MessageSquareText className="size-3.5" />
       ) : (
         <>
-          <span className="min-w-0 flex-1 truncate text-[12px] leading-none text-zinc-200">
+          <span className="min-w-0 flex-1 truncate text-[13px] leading-none text-zinc-200">
             {item.name}
           </span>
           {state.showPill && <ThreadStatePill state={state} hidden={rowHovered} />}
           {state.hasRightIndicator && (
             <span
               className={cn(
-                "flex shrink-0 items-center justify-end gap-1 text-[12px] leading-none text-zinc-500",
+                "flex shrink-0 items-center justify-end gap-1 text-xs leading-none text-zinc-500",
                 rowHovered && "opacity-0",
               )}
             >
@@ -581,11 +581,11 @@ function ThreadHoverPreview({ item }: { item: AgentNavItem }) {
   return (
     <div className="min-w-0 px-4 py-3">
       <div className="flex min-w-0 items-baseline gap-2">
-        <div className="min-w-0 flex-1 truncate text-[13px] font-medium leading-5 text-zinc-50">
+        <div className="min-w-0 flex-1 truncate text-sm font-medium leading-5 text-zinc-50">
           {item.name}
         </div>
         {item.timeLabel && (
-          <div className="shrink-0 text-[12px] tabular-nums leading-none text-zinc-500">
+          <div className="shrink-0 text-xs tabular-nums leading-none text-zinc-500">
             {item.timeLabel}
           </div>
         )}
@@ -607,7 +607,7 @@ function ThreadHoverPreviewRow({
 }) {
   const Icon = icon === "folder" ? Folder : GitBranch;
   return (
-    <div className="flex min-w-0 items-center gap-2 text-[12px] leading-none text-zinc-300">
+    <div className="flex min-w-0 items-center gap-2 text-[13px] leading-none text-zinc-300">
       <Icon className="size-3.5 shrink-0 text-zinc-500" />
       <span className="min-w-0 truncate">{label}</span>
     </div>
@@ -859,7 +859,7 @@ function ThreadStatePill({ state, hidden }: { state: ThreadState; hidden?: boole
   return (
     <span
       className={cn(
-        "max-w-[154px] shrink-0 truncate rounded-full px-2 py-1 text-[12px] font-medium leading-none",
+        "max-w-[154px] shrink-0 truncate rounded-full px-2 py-1 text-[13px] font-medium leading-none",
         hidden && "opacity-0",
         state.tone === "running" && "bg-emerald-500/20 text-emerald-300",
         state.tone === "success" && "bg-sky-500/15 text-sky-300",

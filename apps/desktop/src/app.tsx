@@ -802,9 +802,9 @@ function EmptyHome() {
   return (
     <div className="flex min-h-screen flex-1 items-center justify-center">
       <div className="flex flex-col items-center gap-4 text-center">
-        <BrainLoopLogo size={72} className="shadow-[0_24px_80px_rgba(83,166,255,0.20)]" />
+        <BrainLoopLogo size={72} className="drop-shadow-[0_24px_42px_rgba(83,166,255,0.20)]" />
         <div>
-          <h1 className="text-base font-semibold tracking-tight text-zinc-100">Brain Loop</h1>
+          <h1 className="text-lg font-semibold tracking-tight text-zinc-100">Brain Loop</h1>
         </div>
       </div>
     </div>
@@ -888,8 +888,8 @@ function AgentThreadView({
     return (
       <section className="flex min-h-screen min-w-0 flex-1 items-center justify-center px-6 pt-10">
         <div className="max-w-[360px] text-center">
-          <h2 className="text-sm font-medium text-zinc-100">Thread not found for task</h2>
-          <p className="mt-2 text-xs leading-5 text-zinc-500">
+          <h2 className="text-base font-medium text-zinc-100">Thread not found for task</h2>
+          <p className="mt-2 text-sm leading-6 text-zinc-500">
             This task is visible because it has already started or completed, but no durable thread record exists for it yet.
           </p>
         </div>
@@ -1063,7 +1063,7 @@ function AgentThreadView({
           )}
 
           {thread && (
-            <div className="flex flex-wrap items-center gap-2 text-[11px] text-zinc-500">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
               <span className="rounded-full bg-white/[0.055] px-2 py-1 text-zinc-400">
                 {messageSource === "structured-provider-events"
                   ? "Exact provider messages"
@@ -1078,7 +1078,7 @@ function AgentThreadView({
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="h-7 gap-1.5 px-2 text-[11px] text-zinc-400"
+                className="h-7 gap-1.5 px-2 text-xs text-zinc-400"
                 onClick={handleHarnessReplay}
                 disabled={harnessBusy}
               >
@@ -1134,11 +1134,11 @@ function AgentThreadView({
             <div className="rounded-md bg-white/[0.035]">
               <div className="flex items-center justify-between gap-3 border-b border-white/[0.06] px-3.5 py-2">
                 <div className="min-w-0">
-                  <div className="truncate text-xs font-medium text-zinc-200">{selectedTranscript.label}</div>
-                  <div className="truncate text-[11px] text-zinc-500">{selectedTranscript.fileName}</div>
+                  <div className="truncate text-sm font-medium text-zinc-200">{selectedTranscript.label}</div>
+                  <div className="truncate text-xs text-zinc-500">{selectedTranscript.fileName}</div>
                 </div>
               </div>
-              <pre className="max-h-[320px] overflow-auto whitespace-pre-wrap break-words p-3.5 font-mono text-[11px] leading-5 text-zinc-300">
+              <pre className="max-h-[320px] overflow-auto whitespace-pre-wrap break-words p-3.5 font-mono text-xs leading-5 text-zinc-300">
                 {selectedTranscript.error ?? selectedTranscript.content}
               </pre>
             </div>
@@ -1172,7 +1172,7 @@ function AgentThreadView({
           {canUseCodexHarness && (
             <form onSubmit={handleHarnessSubmit} className="sticky bottom-0 mt-2 rounded-md border border-white/[0.06] bg-[#191919]/95 p-2.5 shadow-[0_-18px_40px_rgba(0,0,0,0.24)] backdrop-blur">
               {harnessError && (
-                <div className="mb-2 rounded-sm bg-red-500/10 px-2.5 py-1.5 text-[11px] leading-4 text-red-100">
+                <div className="mb-2 rounded-sm bg-red-500/10 px-2.5 py-1.5 text-xs leading-5 text-red-100">
                   {harnessError}
                 </div>
               )}
@@ -1181,7 +1181,7 @@ function AgentThreadView({
                   value={harnessDraft}
                   onChange={(event) => setHarnessDraft(event.target.value)}
                   placeholder={hasCodexProviderSession ? "Message Codex" : "Start exact Codex thread"}
-                  className="min-h-[46px] resize-none border-white/[0.08] bg-black/20 text-xs text-zinc-100 placeholder:text-zinc-600"
+                  className="min-h-[46px] resize-none border-white/[0.08] bg-black/20 text-sm text-zinc-100 placeholder:text-zinc-600"
                   disabled={harnessBusy}
                 />
                 <div className="flex shrink-0 gap-1">
@@ -1242,11 +1242,11 @@ function ThreadIdentity({
       className="absolute inset-x-0 top-0 z-20 flex h-10 min-w-0 items-center justify-between gap-4 border-b border-white/[0.045] bg-[#141414]/88 px-5 backdrop-blur-xl"
     >
       <div data-tauri-drag-region className="flex min-w-0 items-baseline gap-2">
-        <h1 className="truncate text-[12px] font-medium leading-none text-zinc-100">{agent.name}</h1>
+        <h1 className="truncate text-[13px] font-medium leading-none text-zinc-100">{agent.name}</h1>
         <span className="size-1 rounded-full bg-zinc-700" aria-hidden="true" />
-        <p className="truncate text-[11px] leading-none text-zinc-500">{projectName}</p>
+        <p className="truncate text-xs leading-none text-zinc-500">{projectName}</p>
       </div>
-      <div className="shrink-0 rounded-full bg-white/[0.055] px-2 py-0.5 text-[11px] leading-none text-zinc-500">
+      <div className="shrink-0 rounded-full bg-white/[0.055] px-2 py-0.5 text-xs leading-none text-zinc-500">
         {thread?.status ?? agent.status}
       </div>
     </div>
@@ -1256,11 +1256,11 @@ function ThreadIdentity({
 function ArtifactCard({ label, path }: { label: string; path: string }) {
   return (
     <div className="min-w-0 rounded-md bg-white/[0.035] px-3.5 py-2.5">
-      <div className="flex items-center gap-2 text-xs font-medium text-zinc-200">
+      <div className="flex items-center gap-2 text-sm font-medium text-zinc-200">
         <FileText className="size-3.5 shrink-0 text-zinc-500" />
         {label}
       </div>
-      <div className="mt-1 break-all font-mono text-[11px] leading-4 text-zinc-500">{path}</div>
+      <div className="mt-1 break-all font-mono text-xs leading-5 text-zinc-500">{path}</div>
     </div>
   );
 }
@@ -1289,8 +1289,8 @@ function TranscriptCard({
     >
       <FileText className="size-4 shrink-0 text-zinc-500" />
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-xs font-medium">{label}</span>
-        <span className="block truncate text-[11px] text-zinc-500">{runnerId ?? logFileNameFromPath(path) ?? path}</span>
+        <span className="block truncate text-sm font-medium">{label}</span>
+        <span className="block truncate text-xs text-zinc-500">{runnerId ?? logFileNameFromPath(path) ?? path}</span>
       </span>
     </Button>
   );
@@ -1329,14 +1329,14 @@ function ThreadMessage({
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2 text-[13px] font-medium text-zinc-200">
           <span>{label}</span>
-          {createdAt && <span className="text-[11px] font-normal text-zinc-600">{formatCompactTimestamp(createdAt)}</span>}
+          {createdAt && <span className="text-xs font-normal text-zinc-600">{formatCompactTimestamp(createdAt)}</span>}
           {exactProviderMessage && (
-            <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-normal text-emerald-200">
+            <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-normal text-emerald-200">
               exact{provider ? ` · ${provider}` : ""}{model ? ` · ${model}` : ""}
             </span>
           )}
         </div>
-        <div className={`mt-1 whitespace-pre-wrap rounded-md px-3.5 py-2.5 text-[12px] leading-5 ${bubbleClass}`}>
+        <div className={`mt-1 whitespace-pre-wrap rounded-md px-3.5 py-2.5 text-sm leading-6 ${bubbleClass}`}>
           {body}
         </div>
       </div>
@@ -1361,11 +1361,11 @@ function formatCompactTimestamp(timestamp: string | null | undefined) {
 function ThreadMetric({ icon: Icon, label, value }: { icon: typeof Code2; label: string; value: string }) {
   return (
     <div className="rounded-md bg-white/[0.035] p-3">
-      <div className="flex items-center gap-2 text-xs text-zinc-500">
+      <div className="flex items-center gap-2 text-sm text-zinc-500">
         <Icon className="size-3.5" />
         {label}
       </div>
-      <div className="mt-2 truncate text-sm font-semibold text-zinc-100">{value}</div>
+      <div className="mt-2 truncate text-base font-semibold text-zinc-100">{value}</div>
     </div>
   );
 }

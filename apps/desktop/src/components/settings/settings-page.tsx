@@ -425,7 +425,7 @@ export function SettingsPage({
           variant="ghost"
           type="button"
           onClick={onBack}
-          className="mt-3 h-auto w-fit gap-2 rounded-md border-0 bg-transparent px-2 py-1.5 text-xs text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100"
+          className="mt-3 h-auto w-fit gap-2 rounded-md border-0 bg-transparent px-2 py-1.5 text-sm text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-100"
         >
           <ArrowLeft className="size-4" />
           Back to app
@@ -440,7 +440,7 @@ export function SettingsPage({
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search settings..."
-            className="h-8 border-white/10 bg-white/[0.05] pl-8 text-xs text-zinc-100 placeholder:text-zinc-500"
+            className="h-8 border-white/10 bg-white/[0.05] pl-8 text-sm text-zinc-100 placeholder:text-zinc-500"
           />
         </div>
 
@@ -455,7 +455,7 @@ export function SettingsPage({
               }
               return (
                 <div key={group} className="mb-4">
-                  <div className="px-2 pb-1 text-[11px] font-medium text-zinc-500">
+                  <div className="px-2 pb-1 text-xs font-medium text-zinc-500">
                     {group}
                   </div>
                   <div className="space-y-1">
@@ -466,7 +466,7 @@ export function SettingsPage({
                         key={category.id}
                         onClick={() => setActiveCategory(category.id)}
                         className={cn(
-                          "h-auto w-full justify-start gap-2.5 rounded-md border-0 bg-transparent px-2.5 py-1.5 text-left text-xs text-zinc-300 hover:bg-white/[0.06] hover:text-zinc-50",
+                          "h-auto w-full justify-start gap-2.5 rounded-md border-0 bg-transparent px-2.5 py-1.5 text-left text-[13px] text-zinc-300 hover:bg-white/[0.06] hover:text-zinc-50",
                           activeCategory === category.id &&
                             "bg-white/10 text-zinc-50",
                         )}
@@ -1429,9 +1429,9 @@ function SettingsSection({
   return (
     <section className="space-y-4">
       <div>
-        <h2 className="text-sm font-semibold text-zinc-100">{title}</h2>
+        <h2 className="text-base font-semibold text-zinc-100">{title}</h2>
         {description && (
-          <p className="mt-1 text-xs text-zinc-500">{description}</p>
+          <p className="mt-1 text-sm text-zinc-500">{description}</p>
         )}
       </div>
       {children}
@@ -1459,8 +1459,8 @@ function SettingRow({
   return (
     <div className="flex min-h-16 items-center gap-4 border-b border-white/10 px-4 py-2.5 last:border-b-0">
       <div className="min-w-0 flex-1">
-        <div className="text-xs font-medium text-zinc-100">{title}</div>
-        <div className="mt-1 max-w-[660px] text-xs leading-5 text-zinc-500">
+        <div className="text-sm font-medium text-zinc-100">{title}</div>
+        <div className="mt-1 max-w-[660px] text-sm leading-5 text-zinc-500">
           {description}
         </div>
       </div>
@@ -1517,8 +1517,8 @@ function ModeCard({
     >
       <Icon className="size-4 text-zinc-300" />
       <span className="min-w-0 flex-1">
-        <span className="block text-xs font-medium text-zinc-100">{title}</span>
-        <span className="mt-1 block text-xs text-zinc-500">{description}</span>
+        <span className="block text-sm font-medium text-zinc-100">{title}</span>
+        <span className="mt-1 block text-sm text-zinc-500">{description}</span>
       </span>
       <span
         className={cn(
@@ -1574,7 +1574,7 @@ function RunnerCatalogRow({
     <div className="grid gap-3 border-b border-white/10 px-4 py-3 last:border-b-0 md:grid-cols-[minmax(0,1fr)_auto]">
       <div className="min-w-0">
         <div className="flex items-center gap-2">
-          <div className="text-xs font-medium text-zinc-100">
+          <div className="text-sm font-medium text-zinc-100">
             {runner.label}
           </div>
           <Badge variant="outline" className="border-zinc-700 text-zinc-400">
@@ -1588,7 +1588,7 @@ function RunnerCatalogRow({
           </Badge>
           {usedAsDefault && <Badge variant="secondary">Default</Badge>}
         </div>
-        <div className="mt-1 text-xs text-zinc-500">
+        <div className="mt-1 text-sm text-zinc-500">
           {runner.id}
           {runner.providerId ? ` · ${runner.providerId}` : ""}
           {runner.apiStyle ? ` · ${runner.apiStyle}` : ""}
@@ -1596,7 +1596,7 @@ function RunnerCatalogRow({
         </div>
         <Label
           htmlFor={`${runner.id}-models`}
-          className="mt-3 block text-[11px] text-zinc-500"
+          className="mt-3 block text-xs text-zinc-500"
         >
           Models
         </Label>
@@ -1605,7 +1605,7 @@ function RunnerCatalogRow({
           id={`${runner.id}-models`}
           defaultValue={runner.models.join(", ")}
           onBlur={(event) => onModelsChange(event.target.value)}
-          className="mt-1 border-white/10 bg-white/[0.05] text-xs"
+          className="mt-1 border-white/10 bg-white/[0.05] text-sm"
         />
       </div>
       <div className="flex flex-col items-end justify-between gap-3">
@@ -1652,7 +1652,7 @@ function NumberSetting({
           onChange(nextValue);
         }
       }}
-      className="w-24 border-white/10 bg-white/[0.05] text-xs"
+      className="w-24 border-white/10 bg-white/[0.05] text-sm"
     />
   );
 }
@@ -1669,7 +1669,7 @@ function PathSetting({
       key={value}
       defaultValue={value}
       onBlur={(event) => onChange(event.target.value)}
-      className="w-80 border-white/10 bg-white/[0.05] text-xs"
+      className="w-80 border-white/10 bg-white/[0.05] text-sm"
     />
   );
 }

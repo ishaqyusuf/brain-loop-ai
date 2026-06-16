@@ -10,7 +10,7 @@ export function BrainLoopLogo({ className, size = 36 }: BrainLoopLogoProps) {
       className={className}
       height={size}
       width={size}
-      viewBox="0 0 1024 1024"
+      viewBox="92 92 840 840"
       xmlns="http://www.w3.org/2000/svg"
     >
       <g transform="translate(92 92) scale(0.8203125)">
