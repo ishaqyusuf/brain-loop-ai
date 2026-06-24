@@ -88,7 +88,7 @@ export const defaultWorktreeStorageRoot = "~/.brain-loop/worktrees";
 export const DEFAULT_SETTINGS: Settings = {
   defaultReviewIntervalMinutes: 2,
   defaultImplementationIntervalMinutes: 2,
-  capacityPollIntervalSeconds: 5,
+  capacityPollIntervalSeconds: 60,
   maxRunningProcesses: 1,
   maxImplementationAgents: 1,
   maxReviewAgents: 1,
@@ -156,13 +156,13 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultReviewRunner: "codex",
   defaultReviewModel: "gpt-5-codex",
   implementationDispatcher: {
-    jobName: "brain-implementation-dispatcher",
-    desiredStatus: "running",
-    lastKnownStatus: "missing",
+    jobName: "brain-loop-app-scheduler",
+    desiredStatus: "stopped",
+    lastKnownStatus: "stopped",
     lastCheckedAt: new Date(0).toISOString(),
     lastUpdatedBy: "system",
-    lastGatewayStatus: "not-loaded",
-    codexAutomationMode: "review-only",
-    lastError: null,
+    lastGatewayStatus: "not-used",
+    codexAutomationMode: "implementation-and-review",
+    lastError: "External dispatcher is not used; Brain Loop app-owned scheduler is the automation runtime.",
   },
 };

@@ -40,7 +40,7 @@ const gndApprovedItem: QueueItem = {
     },
     {
       at: "2026-06-12T10:35:00.000Z",
-      by: "hermes-agent",
+      by: "brain-loop",
       event: "picked_for_implementation",
       agent: "open-code",
     },
@@ -72,7 +72,7 @@ assertTakesHistoryEntry(statusNoteEntry);
 
 const eventDetailEntry: QueueHistoryEntry = {
   at: "2026-06-12T10:36:00.000Z",
-  by: "hermes-agent",
+  by: "brain-loop",
   event: "blocked_macos_tcc",
   detail: "Cannot access brain/ directory.",
 };

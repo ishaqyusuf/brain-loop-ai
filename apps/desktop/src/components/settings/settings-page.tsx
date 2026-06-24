@@ -20,10 +20,12 @@ import {
   Globe,
   Info,
   Play,
+  Plus,
   Search,
   Settings,
   ShieldCheck,
   Timer,
+  Trash2,
 } from "lucide-react";
 import { ApprovalPanel } from "@/components/approval-panel";
 import { ProjectTable } from "@/components/tables/projects/project-table";
@@ -142,6 +144,19 @@ const notificationLabels: Array<{ id: NotificationCategory; label: string }> = [
   { id: "scheduler", label: "Scheduler warnings" },
 ];
 
+function getEffectiveMaxLoopCap(
+  settings: BrainSettings,
+  projectId: string,
+  runnerId: ProjectAgent,
+) {
+  return (
+    settings.maxLoopPolicy.runnerProjectCaps[projectId]?.[runnerId] ??
+    settings.maxLoopPolicy.projectCaps[projectId] ??
+    settings.maxLoopPolicy.runnerCaps[runnerId] ??
+    settings.maxLoopPolicy.globalMax
+  );
+}
+
 export function SettingsPage({
   status,
   schedulerState,
@@ -183,6 +198,12 @@ export function SettingsPage({
   const [confirmAction, setConfirmAction] = useState<LaunchAgentAction | null>(
     null,
   );
+  const [runnerCapTarget, setRunnerCapTarget] = useState("");
+  const [projectCapTarget, setProjectCapTarget] = useState("");
+  const [runnerProjectCapProjectTarget, setRunnerProjectCapProjectTarget] =
+    useState("");
+  const [runnerProjectCapRunnerTarget, setRunnerProjectCapRunnerTarget] =
+    useState("");
 
   const visibleCategories = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -199,6 +220,51 @@ export function SettingsPage({
     categories[0];
   const enabledRunners =
     brainSettings?.runnerCatalog.filter((runner) => runner.enabled) ?? [];
+  const runnerCatalog = brainSettings?.runnerCatalog ?? [];
+  const explicitRunnerCapEntries = brainSettings
+    ? runnerCatalog.filter(
+        (runner) => brainSettings.maxLoopPolicy.runnerCaps[runner.id] !== undefined,
+      )
+    : [];
+  const explicitProjectCapEntries = brainSettings
+    ? projects.filter(
+        (project) =>
+          brainSettings.maxLoopPolicy.projectCaps[project.id] !== undefined,
+      )
+    : [];
+  const explicitRunnerProjectCapEntries = brainSettings
+    ? projects.flatMap((project) =>
+        Object.entries(
+          brainSettings.maxLoopPolicy.runnerProjectCaps[project.id] ?? {},
+        )
+          .filter((entry): entry is [string, number] => typeof entry[1] === "number")
+          .map(([runnerId, cap]) => ({
+            project,
+            runnerId: runnerId as ProjectAgent,
+            cap,
+          })),
+      )
+    : [];
+  const runnerCapOptions = brainSettings
+    ? runnerCatalog.filter(
+        (runner) => brainSettings.maxLoopPolicy.runnerCaps[runner.id] === undefined,
+      )
+    : [];
+  const projectCapOptions = brainSettings
+    ? projects.filter(
+        (project) =>
+          brainSettings.maxLoopPolicy.projectCaps[project.id] === undefined,
+      )
+    : [];
+  const runnerProjectCapOptions =
+    brainSettings && runnerProjectCapProjectTarget
+      ? runnerCatalog.filter(
+          (runner) =>
+            brainSettings.maxLoopPolicy.runnerProjectCaps[
+              runnerProjectCapProjectTarget
+            ]?.[runner.id] === undefined,
+        )
+      : [];
 
   function updateCatalogEntry(
     runnerId: ProjectAgent,
@@ -322,6 +388,18 @@ export function SettingsPage({
     });
   }
 
+  function removeRunnerCap(runnerId: ProjectAgent) {
+    if (!brainSettings) {
+      return;
+    }
+    const runnerCaps = { ...brainSettings.maxLoopPolicy.runnerCaps };
+    delete runnerCaps[runnerId];
+    updateMaxLoopPolicy({
+      ...brainSettings.maxLoopPolicy,
+      runnerCaps,
+    });
+  }
+
   function setProjectCap(projectId: string, value: number) {
     if (!brainSettings || value < 1) {
       return;
@@ -332,6 +410,18 @@ export function SettingsPage({
         ...brainSettings.maxLoopPolicy.projectCaps,
         [projectId]: value,
       },
+    });
+  }
+
+  function removeProjectCap(projectId: string) {
+    if (!brainSettings) {
+      return;
+    }
+    const projectCaps = { ...brainSettings.maxLoopPolicy.projectCaps };
+    delete projectCaps[projectId];
+    updateMaxLoopPolicy({
+      ...brainSettings.maxLoopPolicy,
+      projectCaps,
     });
   }
 
@@ -353,6 +443,65 @@ export function SettingsPage({
         },
       },
     });
+  }
+
+  function removeRunnerProjectCap(projectId: string, runnerId: ProjectAgent) {
+    if (!brainSettings) {
+      return;
+    }
+    const projectRunnerCaps =
+      brainSettings.maxLoopPolicy.runnerProjectCaps[projectId] ?? {};
+    const nextProjectRunnerCaps = { ...projectRunnerCaps };
+    delete nextProjectRunnerCaps[runnerId];
+    const nextRunnerProjectCaps = {
+      ...brainSettings.maxLoopPolicy.runnerProjectCaps,
+    };
+    if (Object.keys(nextProjectRunnerCaps).length === 0) {
+      delete nextRunnerProjectCaps[projectId];
+    } else {
+      nextRunnerProjectCaps[projectId] = nextProjectRunnerCaps;
+    }
+    updateMaxLoopPolicy({
+      ...brainSettings.maxLoopPolicy,
+      runnerProjectCaps: nextRunnerProjectCaps,
+    });
+  }
+
+  function addRunnerCap(runnerId: ProjectAgent) {
+    if (!brainSettings) {
+      return;
+    }
+    setRunnerCap(runnerId, brainSettings.maxLoopPolicy.globalMax);
+    setRunnerCapTarget("");
+  }
+
+  function addProjectCap(projectId: string) {
+    if (!brainSettings) {
+      return;
+    }
+    setProjectCap(projectId, brainSettings.maxLoopPolicy.globalMax);
+    setProjectCapTarget("");
+  }
+
+  function addRunnerProjectCap() {
+    if (
+      !brainSettings ||
+      !runnerProjectCapProjectTarget ||
+      !runnerProjectCapRunnerTarget
+    ) {
+      return;
+    }
+    const runnerId = runnerProjectCapRunnerTarget as ProjectAgent;
+    setRunnerProjectCap(
+      runnerProjectCapProjectTarget,
+      runnerId,
+      getEffectiveMaxLoopCap(
+        brainSettings,
+        runnerProjectCapProjectTarget,
+        runnerId,
+      ),
+    );
+    setRunnerProjectCapRunnerTarget("");
   }
 
   function setSchedulingPolicy(policy: BrainSettings["schedulingPolicy"]) {
@@ -876,7 +1025,10 @@ export function SettingsPage({
       case "automation":
         return (
           <div className="space-y-10">
-            <SettingsSection title="Scheduler">
+            <SettingsSection
+              title="Automation runtime"
+              description="Control when Brain Loop is allowed to launch implementation and review ticks."
+            >
               <SettingsGroup>
                 <SettingRow
                   title="Scheduler state"
@@ -931,8 +1083,38 @@ export function SettingsPage({
                   }
                 />
                 <SettingRow
+                  title="Run one implementation tick"
+                  description={`${status.queuedItems} queued item${status.queuedItems === 1 ? "" : "s"} visible.`}
+                  action={
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={onRunImplementation}
+                    >
+                      Run
+                    </Button>
+                  }
+                />
+                <SettingRow
+                  title="Run one review tick"
+                  description={`${status.submittedItems} submitted item${status.submittedItems === 1 ? "" : "s"} visible.`}
+                  action={
+                    <Button size="sm" variant="secondary" onClick={onRunReview}>
+                      Run
+                    </Button>
+                  }
+                />
+              </SettingsGroup>
+            </SettingsSection>
+
+            <SettingsSection
+              title="Agent pools"
+              description="Set the top-level implementation and review concurrency before fairness limits are applied."
+            >
+              <SettingsGroup>
+                <SettingRow
                   title="Maximum implementation agents"
-                  description="Maximum implementation agents the capacity loop may run at once, before MaxLoop caps are applied."
+                  description="Maximum implementation agents the capacity loop may run at once."
                   action={
                     brainSettings ? (
                       <NumberSetting
@@ -963,35 +1145,39 @@ export function SettingsPage({
                     )
                   }
                 />
+              </SettingsGroup>
+            </SettingsSection>
+
+            <SettingsSection
+              title="Implementation queue order"
+              description="Choose how implementation candidates are ordered after eligibility checks."
+            >
+              <SettingsGroup>
                 <SettingRow
-                  title="Run one implementation tick"
-                  description={`${status.queuedItems} queued item${status.queuedItems === 1 ? "" : "s"} visible.`}
+                  title="Queue order"
+                  description="Fixes first gives reviewed fix requests priority. FIFO keeps all implementation work in creation order."
                   action={
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={onRunImplementation}
-                    >
-                      Run
-                    </Button>
-                  }
-                />
-                <SettingRow
-                  title="Run one review tick"
-                  description={`${status.submittedItems} submitted item${status.submittedItems === 1 ? "" : "s"} visible.`}
-                  action={
-                    <Button size="sm" variant="secondary" onClick={onRunReview}>
-                      Run
-                    </Button>
+                    brainSettings ? (
+                      <SchedulingPolicyControl
+                        value={brainSettings.schedulingPolicy}
+                        onChange={setSchedulingPolicy}
+                      />
+                    ) : (
+                      <Badge variant="secondary">Loading</Badge>
+                    )
                   }
                 />
               </SettingsGroup>
             </SettingsSection>
-            <SettingsSection title="Scheduling policy">
+
+            <SettingsSection
+              title="Fairness limits"
+              description="Advanced implementation caps. Overrides are stored only when explicitly added."
+            >
               <SettingsGroup>
                 <SettingRow
                   title="MaxLoop global cap"
-                  description="Hard ceiling for implementation agents. Runner, project, and runner-project caps are also enforced when configured."
+                  description="Hard ceiling for active implementation agents across all runners and projects."
                   action={
                     brainSettings ? (
                       <NumberSetting
@@ -1004,110 +1190,58 @@ export function SettingsPage({
                     )
                   }
                 />
-                {brainSettings?.runnerCatalog.map((runner) => (
-                  <SettingRow
-                    key={`runner-cap-${runner.id}`}
-                    title={`${runner.label} runner cap`}
-                    description={`Maximum active implementation agents using ${runner.label}.`}
-                    action={
-                      <NumberSetting
-                        value={
-                          brainSettings.maxLoopPolicy.runnerCaps[runner.id] ??
-                          brainSettings.maxLoopPolicy.globalMax
-                        }
-                        min={1}
-                        onChange={(value) => setRunnerCap(runner.id, value)}
-                      />
+                {brainSettings ? (
+                  <MaxLoopOverrideEditor
+                    settings={brainSettings}
+                    projects={projects}
+                    explicitRunnerCapEntries={explicitRunnerCapEntries}
+                    explicitProjectCapEntries={explicitProjectCapEntries}
+                    explicitRunnerProjectCapEntries={
+                      explicitRunnerProjectCapEntries
                     }
-                  />
-                ))}
-                {projects.map((project) => (
-                  <SettingRow
-                    key={`project-cap-${project.id}`}
-                    title={`${project.name} project cap`}
-                    description="Maximum active implementation agents for this project."
-                    action={
-                      brainSettings ? (
-                        <NumberSetting
-                          value={
-                            brainSettings.maxLoopPolicy.projectCaps[
-                              project.id
-                            ] ?? brainSettings.maxLoopPolicy.globalMax
-                          }
-                          min={1}
-                          onChange={(value) => setProjectCap(project.id, value)}
-                        />
-                      ) : (
-                        <Badge variant="secondary">Loading</Badge>
-                      )
+                    runnerCapOptions={runnerCapOptions}
+                    projectCapOptions={projectCapOptions}
+                    runnerProjectCapOptions={runnerProjectCapOptions}
+                    runnerCapTarget={runnerCapTarget}
+                    projectCapTarget={projectCapTarget}
+                    runnerProjectCapProjectTarget={
+                      runnerProjectCapProjectTarget
                     }
-                  />
-                ))}
-                {brainSettings &&
-                  projects.map((project) => (
-                    <SettingRow
-                      key={`runner-project-cap-${project.id}-${brainSettings.defaultImplementationRunner}`}
-                      title={`${project.name} ${brainSettings.defaultImplementationRunner} cap`}
-                      description="Most specific cap for the default implementation runner in this project."
-                      action={
-                        <NumberSetting
-                          value={
-                            brainSettings.maxLoopPolicy.runnerProjectCaps[
-                              project.id
-                            ]?.[brainSettings.defaultImplementationRunner] ??
-                            brainSettings.maxLoopPolicy.projectCaps[
-                              project.id
-                            ] ??
-                            brainSettings.maxLoopPolicy.runnerCaps[
-                              brainSettings.defaultImplementationRunner
-                            ] ??
-                            brainSettings.maxLoopPolicy.globalMax
-                          }
-                          min={1}
-                          onChange={(value) =>
-                            setRunnerProjectCap(
-                              project.id,
-                              brainSettings.defaultImplementationRunner,
-                              value,
-                            )
-                          }
-                        />
+                    runnerProjectCapRunnerTarget={runnerProjectCapRunnerTarget}
+                    onRunnerCapTargetChange={(runnerId) => {
+                      setRunnerCapTarget(runnerId);
+                      if (runnerId) {
+                        addRunnerCap(runnerId as ProjectAgent);
                       }
-                    />
-                  ))}
-                <SettingRow
-                  title="Queue selection policy"
-                  description="Choose whether reviewed fix requests jump ahead of new queued work, or whether all implementation work follows FIFO order."
-                  action={
-                    brainSettings ? (
-                      <Select
-                        value={brainSettings.schedulingPolicy}
-                        onValueChange={(value) =>
-                          setSchedulingPolicy(
-                            value as BrainSettings["schedulingPolicy"],
-                          )
-                        }
-                      >
-                        <SelectTrigger className="w-52 bg-white/[0.06]">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="fix-before-new-task">
-                            Fix before new task
-                          </SelectItem>
-                          <SelectItem value="fifo">FIFO</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    ) : (
-                      <Badge variant="secondary">Loading</Badge>
-                    )
-                  }
-                />
-                <SettingRow
-                  title="Waiting reasons"
-                  description="Queue warnings show MaxLoop and dependency wait reasons."
-                  action={<Badge variant="secondary">Implemented</Badge>}
-                />
+                    }}
+                    onProjectCapTargetChange={(projectId) => {
+                      setProjectCapTarget(projectId);
+                      if (projectId) {
+                        addProjectCap(projectId);
+                      }
+                    }}
+                    onRunnerProjectCapProjectTargetChange={(projectId) => {
+                      setRunnerProjectCapProjectTarget(projectId);
+                      setRunnerProjectCapRunnerTarget("");
+                    }}
+                    onRunnerProjectCapRunnerTargetChange={(runnerId) =>
+                      setRunnerProjectCapRunnerTarget(runnerId)
+                    }
+                    onAddRunnerProjectCap={addRunnerProjectCap}
+                    onSetRunnerCap={setRunnerCap}
+                    onSetProjectCap={setProjectCap}
+                    onSetRunnerProjectCap={setRunnerProjectCap}
+                    onRemoveRunnerCap={removeRunnerCap}
+                    onRemoveProjectCap={removeProjectCap}
+                    onRemoveRunnerProjectCap={removeRunnerProjectCap}
+                  />
+                ) : (
+                  <SettingRow
+                    title="Fairness overrides"
+                    description="Loading settings from the Brain Loop state root."
+                    action={<Badge variant="secondary">Loading</Badge>}
+                  />
+                )}
               </SettingsGroup>
             </SettingsSection>
           </div>
@@ -1529,6 +1663,343 @@ function ModeCard({
         )}
       />
     </Button>
+  );
+}
+
+function SchedulingPolicyControl({
+  value,
+  onChange,
+}: {
+  value: BrainSettings["schedulingPolicy"];
+  onChange: (value: BrainSettings["schedulingPolicy"]) => void;
+}) {
+  const options: Array<{
+    value: BrainSettings["schedulingPolicy"];
+    label: string;
+  }> = [
+    { value: "fix-before-new-task", label: "Fixes first" },
+    { value: "fifo", label: "FIFO" },
+  ];
+
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Implementation queue order"
+      className="grid h-8 w-64 grid-cols-2 rounded-lg border border-white/10 bg-white/[0.04] p-0.5"
+    >
+      {options.map((option) => (
+        <Button
+          key={option.value}
+          type="button"
+          variant="ghost"
+          size="sm"
+          role="radio"
+          aria-checked={value === option.value}
+          onClick={() => onChange(option.value)}
+          className={cn(
+            "h-7 rounded-md border-0 px-2 text-xs",
+            value === option.value
+              ? "bg-white/10 text-zinc-50 hover:bg-white/10"
+              : "bg-transparent text-zinc-400 hover:bg-white/[0.06]",
+          )}
+        >
+          {option.label}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
+function MaxLoopOverrideEditor({
+  settings,
+  projects,
+  explicitRunnerCapEntries,
+  explicitProjectCapEntries,
+  explicitRunnerProjectCapEntries,
+  runnerCapOptions,
+  projectCapOptions,
+  runnerProjectCapOptions,
+  runnerCapTarget,
+  projectCapTarget,
+  runnerProjectCapProjectTarget,
+  runnerProjectCapRunnerTarget,
+  onRunnerCapTargetChange,
+  onProjectCapTargetChange,
+  onRunnerProjectCapProjectTargetChange,
+  onRunnerProjectCapRunnerTargetChange,
+  onAddRunnerProjectCap,
+  onSetRunnerCap,
+  onSetProjectCap,
+  onSetRunnerProjectCap,
+  onRemoveRunnerCap,
+  onRemoveProjectCap,
+  onRemoveRunnerProjectCap,
+}: {
+  settings: BrainSettings;
+  projects: BrainProject[];
+  explicitRunnerCapEntries: BrainSettings["runnerCatalog"];
+  explicitProjectCapEntries: BrainProject[];
+  explicitRunnerProjectCapEntries: Array<{
+    project: BrainProject;
+    runnerId: ProjectAgent;
+    cap: number;
+  }>;
+  runnerCapOptions: BrainSettings["runnerCatalog"];
+  projectCapOptions: BrainProject[];
+  runnerProjectCapOptions: BrainSettings["runnerCatalog"];
+  runnerCapTarget: string;
+  projectCapTarget: string;
+  runnerProjectCapProjectTarget: string;
+  runnerProjectCapRunnerTarget: string;
+  onRunnerCapTargetChange: (runnerId: string) => void;
+  onProjectCapTargetChange: (projectId: string) => void;
+  onRunnerProjectCapProjectTargetChange: (projectId: string) => void;
+  onRunnerProjectCapRunnerTargetChange: (runnerId: string) => void;
+  onAddRunnerProjectCap: () => void;
+  onSetRunnerCap: (runnerId: ProjectAgent, value: number) => void;
+  onSetProjectCap: (projectId: string, value: number) => void;
+  onSetRunnerProjectCap: (
+    projectId: string,
+    runnerId: ProjectAgent,
+    value: number,
+  ) => void;
+  onRemoveRunnerCap: (runnerId: ProjectAgent) => void;
+  onRemoveProjectCap: (projectId: string) => void;
+  onRemoveRunnerProjectCap: (
+    projectId: string,
+    runnerId: ProjectAgent,
+  ) => void;
+}) {
+  return (
+    <>
+      <OverrideAddRow
+        title="Runner overrides"
+        description="Runner caps inherit the global cap until an override is added."
+        action={
+          <AddOverrideSelect
+            value={runnerCapTarget}
+            placeholder="Add runner"
+            emptyLabel="All inherited"
+            options={runnerCapOptions.map((runner) => ({
+              value: runner.id,
+              label: runner.label,
+            }))}
+            onChange={onRunnerCapTargetChange}
+          />
+        }
+      />
+      {explicitRunnerCapEntries.map((runner) => (
+        <MaxLoopOverrideRow
+          key={`runner-cap-${runner.id}`}
+          title={runner.label}
+          description={`Runner-specific cap. Effective cap: ${
+            settings.maxLoopPolicy.runnerCaps[runner.id] ??
+            settings.maxLoopPolicy.globalMax
+          }.`}
+          value={
+            settings.maxLoopPolicy.runnerCaps[runner.id] ??
+            settings.maxLoopPolicy.globalMax
+          }
+          onChange={(value) => onSetRunnerCap(runner.id, value)}
+          onRemove={() => onRemoveRunnerCap(runner.id)}
+        />
+      ))}
+
+      <OverrideAddRow
+        title="Project overrides"
+        description="Project caps inherit the global cap until an override is added."
+        action={
+          <AddOverrideSelect
+            value={projectCapTarget}
+            placeholder="Add project"
+            emptyLabel={projects.length === 0 ? "No projects" : "All inherited"}
+            options={projectCapOptions.map((project) => ({
+              value: project.id,
+              label: project.name,
+            }))}
+            onChange={onProjectCapTargetChange}
+          />
+        }
+      />
+      {explicitProjectCapEntries.map((project) => (
+        <MaxLoopOverrideRow
+          key={`project-cap-${project.id}`}
+          title={project.name}
+          description={`Project-specific cap. Effective cap: ${
+            settings.maxLoopPolicy.projectCaps[project.id] ??
+            settings.maxLoopPolicy.globalMax
+          }.`}
+          value={
+            settings.maxLoopPolicy.projectCaps[project.id] ??
+            settings.maxLoopPolicy.globalMax
+          }
+          onChange={(value) => onSetProjectCap(project.id, value)}
+          onRemove={() => onRemoveProjectCap(project.id)}
+        />
+      ))}
+
+      <OverrideAddRow
+        title="Runner-project overrides"
+        description="Most-specific caps inherit runner, project, then global limits."
+        action={
+          <div className="flex items-center gap-2">
+            <Select
+              value={runnerProjectCapProjectTarget}
+              onValueChange={onRunnerProjectCapProjectTargetChange}
+            >
+              <SelectTrigger className="w-44 bg-white/[0.06]">
+                <SelectValue placeholder="Project" />
+              </SelectTrigger>
+              <SelectContent>
+                {projects.map((project) => (
+                  <SelectItem key={project.id} value={project.id}>
+                    {project.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <AddOverrideSelect
+              value={runnerProjectCapRunnerTarget}
+              placeholder="Runner"
+              emptyLabel="All runners"
+              options={runnerProjectCapOptions.map((runner) => ({
+                value: runner.id,
+                label: runner.label,
+              }))}
+              onChange={onRunnerProjectCapRunnerTargetChange}
+              disabled={!runnerProjectCapProjectTarget}
+            />
+            <Button
+              type="button"
+              size="icon-sm"
+              variant="secondary"
+              aria-label="Add runner-project cap"
+              disabled={
+                !runnerProjectCapProjectTarget ||
+                !runnerProjectCapRunnerTarget
+              }
+              onClick={onAddRunnerProjectCap}
+            >
+              <Plus className="size-3.5" />
+            </Button>
+          </div>
+        }
+      />
+      {explicitRunnerProjectCapEntries.map(({ project, runnerId, cap }) => {
+        const runnerLabel =
+          settings.runnerCatalog.find((runner) => runner.id === runnerId)
+            ?.label ?? runnerId;
+        return (
+          <MaxLoopOverrideRow
+            key={`runner-project-cap-${project.id}-${runnerId}`}
+            title={`${project.name} · ${runnerLabel}`}
+            description={`Most-specific cap. Effective cap: ${getEffectiveMaxLoopCap(
+              settings,
+              project.id,
+              runnerId,
+            )}.`}
+            value={cap}
+            onChange={(value) =>
+              onSetRunnerProjectCap(project.id, runnerId, value)
+            }
+            onRemove={() => onRemoveRunnerProjectCap(project.id, runnerId)}
+          />
+        );
+      })}
+    </>
+  );
+}
+
+function OverrideAddRow({
+  title,
+  description,
+  action,
+}: {
+  title: string;
+  description: string;
+  action: ReactNode;
+}) {
+  return (
+    <div className="flex min-h-14 items-center gap-4 border-b border-white/10 px-4 py-2.5 last:border-b-0">
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium text-zinc-100">{title}</div>
+        <div className="mt-1 max-w-[660px] text-sm leading-5 text-zinc-500">
+          {description}
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center justify-end">{action}</div>
+    </div>
+  );
+}
+
+function AddOverrideSelect({
+  value,
+  placeholder,
+  emptyLabel,
+  options,
+  disabled,
+  onChange,
+}: {
+  value: string;
+  placeholder: string;
+  emptyLabel: string;
+  options: Array<{ value: string; label: string }>;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}) {
+  if (options.length === 0) {
+    return <Badge variant="secondary">{emptyLabel}</Badge>;
+  }
+  return (
+    <Select value={value} onValueChange={onChange} disabled={disabled}>
+      <SelectTrigger className="w-44 bg-white/[0.06]">
+        <SelectValue placeholder={placeholder} />
+      </SelectTrigger>
+      <SelectContent>
+        {options.map((option) => (
+          <SelectItem key={option.value} value={option.value}>
+            {option.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+function MaxLoopOverrideRow({
+  title,
+  description,
+  value,
+  onChange,
+  onRemove,
+}: {
+  title: string;
+  description: string;
+  value: number;
+  onChange: (value: number) => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div className="flex min-h-14 items-center gap-4 border-b border-white/10 bg-white/[0.02] px-4 py-2.5 last:border-b-0">
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium text-zinc-100">{title}</div>
+        <div className="mt-1 max-w-[660px] text-sm leading-5 text-zinc-500">
+          {description}
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        <NumberSetting value={value} min={1} onChange={onChange} />
+        <Button
+          type="button"
+          size="icon-sm"
+          variant="ghost"
+          aria-label={`Remove ${title} override`}
+          onClick={onRemove}
+        >
+          <Trash2 className="size-3.5" />
+        </Button>
+      </div>
+    </div>
   );
 }
 

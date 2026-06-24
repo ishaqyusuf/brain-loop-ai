@@ -10,6 +10,16 @@ All active UI-bearing tasks must follow the Codex UI standard in `brain/engineer
 
 ## Tasks
 
+### Redesign Orchestrator Chat UI
+- Priority: High
+- Description: Track plan in `brain/plans/2026-06-18-ux-ui-orchestrator-chat-ui-redesign.md`.
+- Related Feature: Orchestration threads
+- Status: In Progress
+- Plan Status: In Progress
+- Plan File: brain/plans/2026-06-18-ux-ui-orchestrator-chat-ui-redesign.md
+- Intake File: brain/intake/2026-06-18-orchestrator-chat-ui-redesign.md
+- Created Date: 2026-06-18
+
 ### Establish Workspace Validation And UI Foundation
 - Priority: High
 - Description: Track plan in `brain/plans/2026-06-12-cleanup-workspace-validation-ui-foundation.md`.
@@ -79,3 +89,12 @@ All active UI-bearing tasks must follow the Codex UI standard in `brain/engineer
 - Plan File: brain/plans/2026-06-12-ux-ui-permission-required-alerts.md
 - Intake File: brain/intake/2026-06-12-loop-product-settings.md
 - Created Date: 2026-06-12
+
+### Add Orchestration Threads And External Handoff Import
+- Priority: High
+- Description: Implement Orchestrator sidebar tab, persisted orchestration chats, orchestration-linked queue handoffs, external-agent handoff skill, and disabled-by-default project import.
+- Related Feature: Orchestration threads
+- Status: In Progress
+- Plan Status: In Progress
+- Plan File: TODO: Create formal plan if this work expands beyond the current implementation pass.
+- Created Date: 2026-06-16

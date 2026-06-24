@@ -21,6 +21,8 @@ pub struct AgentThreadMessage {
 pub struct AgentThread {
     pub id: String,
     pub queue_item_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub orchestration_id: Option<String>,
     pub project_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_name: Option<String>,
@@ -236,6 +238,7 @@ pub fn upsert_from_queue_value(item: &Value) -> Result<AgentThread, String> {
     let thread = AgentThread {
         id,
         queue_item_id: queue_item_id.clone(),
+        orchestration_id: optional_string(item, "orchestrationId"),
         project_id,
         project_name: None,
         project_path,
@@ -554,7 +557,7 @@ fn append_unique_message<'a, I>(
     });
 }
 
-fn thread_id_for_queue_item(queue_item_id: &str) -> String {
+pub fn thread_id_for_queue_item(queue_item_id: &str) -> String {
     let mut clean = String::with_capacity(queue_item_id.len());
     for ch in queue_item_id.chars() {
         if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {

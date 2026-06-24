@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
-import type { BrainProject, QueueItem } from "@brain-loop/brain-core";
-import { AlertCircle } from "lucide-react";
+import type { BrainProject, QueueItem, SchedulerStatus } from "@brain-loop/brain-core";
+import { AlertCircle, Play } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -31,6 +31,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyTitle } from "@/components/ui/empty";
 import { Separator } from "@/components/ui/separator";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 type RuntimeQueueItem = QueueItem & {
   lease?: {
@@ -48,6 +49,10 @@ interface QueueTableProps {
   projects: BrainProject[];
   isLoading: boolean;
   error?: string | null;
+  schedulerStatus?: SchedulerStatus | null;
+  queueStartBusyId?: string | null;
+  queueStartResult?: { ok: boolean; text: string } | null;
+  onRunQueueItem?: (queueItemId: string) => void;
 }
 
 const staleActiveMinutes = 30;
@@ -120,7 +125,16 @@ function formatAge(item: QueueItem) {
   return `${Math.floor(ageMinutes / 60)}h ${ageMinutes % 60}m`;
 }
 
-export function QueueTable({ items, projects, isLoading, error }: QueueTableProps) {
+export function QueueTable({
+  items,
+  projects,
+  isLoading,
+  error,
+  schedulerStatus = null,
+  queueStartBusyId = null,
+  queueStartResult = null,
+  onRunQueueItem,
+}: QueueTableProps) {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [agentFilter, setAgentFilter] = useState<string>("all");
   const [projectFilter, setProjectFilter] = useState<string>("all");
@@ -267,6 +281,15 @@ export function QueueTable({ items, projects, isLoading, error }: QueueTableProp
         </Alert>
       )}
 
+      {queueStartResult && (
+        <Alert variant={queueStartResult.ok ? "default" : "destructive"}>
+          <AlertTitle>Manual start {queueStartResult.ok ? "queued" : "failed"}</AlertTitle>
+          <AlertDescription className="break-all font-mono text-xs">
+            {queueStartResult.text}
+          </AlertDescription>
+        </Alert>
+      )}
+
       <div className="flex flex-wrap items-center gap-3">
         <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger className="w-[160px]">
@@ -362,7 +385,15 @@ export function QueueTable({ items, projects, isLoading, error }: QueueTableProp
                 </TableCell>
               </TableRow>
             ) : (
-              filteredItems.map((item) => (
+              filteredItems.map((item) => {
+                const startState = getQueueStartState(
+                  item,
+                  projects,
+                  schedulerStatus,
+                  queueStartBusyId === item.id,
+                );
+
+                return (
                 <TableRow key={item.id}>
                   <TableCell className="max-w-[260px]">
                     <div className="truncate font-medium">{getTaskName(item)}</div>
@@ -395,6 +426,13 @@ export function QueueTable({ items, projects, isLoading, error }: QueueTableProp
                     )}
                   </TableCell>
                   <TableCell className="text-right">
+                    <div className="flex justify-end gap-2">
+                      {onRunQueueItem && (
+                        <QueueStartButton
+                          state={startState}
+                          onStart={() => onRunQueueItem(item.id)}
+                        />
+                      )}
                     <Sheet>
                       <SheetTrigger asChild>
                         <Button variant="secondary" size="sm" onClick={() => setSelectedItem(item)}>
@@ -494,15 +532,114 @@ export function QueueTable({ items, projects, isLoading, error }: QueueTableProp
                         )}
                       </SheetContent>
                     </Sheet>
+                    </div>
                   </TableCell>
                 </TableRow>
-              ))
+                );
+              })
             )}
           </TableBody>
         </Table>
       </Card>
     </div>
   );
+}
+
+type QueueStartState = {
+  canStart: boolean;
+  busy: boolean;
+  reason: string;
+};
+
+function QueueStartButton({
+  state,
+  onStart,
+}: {
+  state: QueueStartState;
+  onStart: () => void;
+}) {
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span>
+            <Button
+              type="button"
+              size="sm"
+              variant={state.canStart ? "secondary" : "ghost"}
+              disabled={!state.canStart || state.busy}
+              onClick={(event) => {
+                event.stopPropagation();
+                onStart();
+              }}
+              className="gap-1.5"
+            >
+              <Play className="size-3.5" />
+              {state.busy ? "Starting" : "Start"}
+            </Button>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="left">{state.reason}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+function getQueueStartState(
+  item: QueueItem,
+  projects: BrainProject[],
+  schedulerStatus: SchedulerStatus | null,
+  busy: boolean,
+): QueueStartState {
+  if (busy) {
+    return { canStart: false, busy: true, reason: "Starting this task now." };
+  }
+
+  const project = projects.find((candidate) => candidate.id === item.projectId || candidate.path === item.projectPath);
+  if (project?.enabled === false) {
+    return { canStart: false, busy: false, reason: "Project is disabled." };
+  }
+  if (projects.length > 0 && !project) {
+    return { canStart: false, busy: false, reason: "Project is not registered." };
+  }
+  if (!item.agent) {
+    return { canStart: false, busy: false, reason: "Task has no runner." };
+  }
+  if (item.waitingReason) {
+    return { canStart: false, busy: false, reason: item.waitingReason };
+  }
+
+  if (item.status === "queued" || item.status === "reviewed-fix-request") {
+    if (
+      schedulerStatus &&
+      schedulerStatus.activeImplementationAgents >= schedulerStatus.maxImplementationAgents
+    ) {
+      return { canStart: false, busy: false, reason: "Implementation capacity is full." };
+    }
+    return { canStart: true, busy: false, reason: "Start implementation for this task only." };
+  }
+
+  if (item.status === "submitted") {
+    if (schedulerStatus && schedulerStatus.activeReviewAgents >= schedulerStatus.maxReviewAgents) {
+      return { canStart: false, busy: false, reason: "Review capacity is full." };
+    }
+    return { canStart: true, busy: false, reason: "Start review for this task only." };
+  }
+
+  if (item.status === "landing") {
+    return { canStart: false, busy: false, reason: "Landing or approval flow owns this task." };
+  }
+  if (item.status === "approved") {
+    return { canStart: false, busy: false, reason: "Task is already approved." };
+  }
+  if (item.status === "picked" || item.status === "started" || item.status === "reviewing") {
+    return { canStart: false, busy: false, reason: "Task is already active." };
+  }
+  if (item.status === "blocked" || item.status === "stale-started") {
+    return { canStart: false, busy: false, reason: "Move this task back to queued or submitted before starting." };
+  }
+
+  return { canStart: false, busy: false, reason: `Status ${item.status} cannot be manually started.` };
 }
 
 function QueueMetric({ title, value }: { title: string; value: number }) {

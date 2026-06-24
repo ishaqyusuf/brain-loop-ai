@@ -6,6 +6,8 @@ import type {
   ApprovalRequestInput,
   BrainStatus,
   BrainProject,
+  ProjectFolderInspectionInput,
+  ProjectFolderInspection,
   QueueListResponse,
   QueueItem,
   LogSummary,
@@ -17,6 +19,13 @@ import type {
   HarnessProviderCapability,
   HarnessSession,
   HarnessSessionStartInput,
+  OrchestrationThread,
+  OrchestrationThreadInput,
+  OrchestrationMessageInput,
+  OrchestrationRunInput,
+  OrchestrationProjectUpdateInput,
+  OrchestrationHandoffInput,
+  OrchestrationHandoffResult,
   DirectModelRuntimeContract,
   DirectModelTurnInput,
   DirectModelProviderRequest,
@@ -25,9 +34,14 @@ import type {
   DirectModelTurnEvent,
   DirectModelHarnessEventPreview,
   DirectModelHarnessRecordResult,
+  DirectModelTurnExecutionResult,
+  DirectModelToolLoopInput,
+  DirectModelToolLoopResult,
   DirectModelToolExecutionInput,
   DirectModelToolExecutionResult,
   DirectModelToolApprovalResult,
+  DirectModelApprovedToolExecutionInput,
+  DirectModelApprovedToolExecutionResult,
 } from "@brain-loop/brain-core";
 
 export interface LogEvent {
@@ -117,6 +131,12 @@ export async function getSettings(): Promise<Settings> {
 
 export async function updateSettings(settings: Settings): Promise<Settings> {
   return await invoke<Settings>("update_settings", { settings });
+}
+
+export async function inspectProjectFolder(
+  input: ProjectFolderInspectionInput,
+): Promise<ProjectFolderInspection> {
+  return await invoke<ProjectFolderInspection>("inspect_project_folder", { input });
 }
 
 export async function listProjects(): Promise<BrainProject[]> {
@@ -211,6 +231,40 @@ export async function archiveAgentThread(
   });
 }
 
+export async function listOrchestrations(): Promise<OrchestrationThread[]> {
+  return await invoke<OrchestrationThread[]>("list_orchestrations");
+}
+
+export async function createOrchestration(
+  input: OrchestrationThreadInput,
+): Promise<OrchestrationThread> {
+  return await invoke<OrchestrationThread>("create_orchestration", { input });
+}
+
+export async function appendOrchestrationMessage(
+  input: OrchestrationMessageInput,
+): Promise<OrchestrationThread> {
+  return await invoke<OrchestrationThread>("append_orchestration_message", { input });
+}
+
+export async function runOrchestrationTurn(
+  input: OrchestrationRunInput,
+): Promise<OrchestrationThread> {
+  return await invoke<OrchestrationThread>("run_orchestration_turn", { input });
+}
+
+export async function updateOrchestrationProject(
+  input: OrchestrationProjectUpdateInput,
+): Promise<OrchestrationThread> {
+  return await invoke<OrchestrationThread>("update_orchestration_project", { input });
+}
+
+export async function handoffOrchestration(
+  input: OrchestrationHandoffInput,
+): Promise<OrchestrationHandoffResult> {
+  return await invoke<OrchestrationHandoffResult>("handoff_orchestration", { input });
+}
+
 export async function listHarnessCapabilities(): Promise<HarnessProviderCapability[]> {
   return await invoke<HarnessProviderCapability[]>("list_harness_capabilities");
 }
@@ -254,6 +308,22 @@ export async function recordDirectModelHarnessEvents(
   );
 }
 
+export async function executeDirectModelTurn(
+  input: DirectModelTurnInput,
+): Promise<DirectModelTurnExecutionResult> {
+  return await invoke<DirectModelTurnExecutionResult>("execute_direct_model_turn", {
+    input,
+  });
+}
+
+export async function executeDirectModelToolLoop(
+  input: DirectModelToolLoopInput,
+): Promise<DirectModelToolLoopResult> {
+  return await invoke<DirectModelToolLoopResult>("execute_direct_model_tool_loop", {
+    input,
+  });
+}
+
 export async function executeDirectModelTool(
   input: DirectModelToolExecutionInput,
 ): Promise<DirectModelToolExecutionResult> {
@@ -267,6 +337,15 @@ export async function requestDirectModelToolApproval(
 ): Promise<DirectModelToolApprovalResult> {
   return await invoke<DirectModelToolApprovalResult>(
     "request_direct_model_tool_approval",
+    { input },
+  );
+}
+
+export async function executeApprovedDirectModelTool(
+  input: DirectModelApprovedToolExecutionInput,
+): Promise<DirectModelApprovedToolExecutionResult> {
+  return await invoke<DirectModelApprovedToolExecutionResult>(
+    "execute_approved_direct_model_tool",
     { input },
   );
 }
@@ -357,6 +436,10 @@ export async function getSchedulerStatus(): Promise<SchedulerStatus> {
 
 export async function runImplementationOnce(): Promise<string> {
   return await invoke<string>("run_implementation_once");
+}
+
+export async function runQueueItemOnce(queueItemId: string): Promise<string> {
+  return await invoke<string>("run_queue_item_once", { queueItemId });
 }
 
 export async function runReviewOnce(): Promise<string> {

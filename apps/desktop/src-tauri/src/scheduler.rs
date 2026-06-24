@@ -245,7 +245,7 @@ pub fn read_capacity_poll_interval_seconds() -> u64 {
             return seconds.clamp(1, 60) as u64;
         }
     }
-    5
+    60
 }
 
 fn read_agent_capacity() -> AgentCapacity {

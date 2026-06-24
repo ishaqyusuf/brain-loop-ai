@@ -1,4 +1,4 @@
-import type { BrainStatus } from "@brain-loop/brain-core";
+import type { BrainProject, BrainStatus, SchedulerStatus } from "@brain-loop/brain-core";
 import { Fragment, useEffect, useRef, useState, type FocusEvent, type MouseEvent, type PointerEvent } from "react";
 import {
   AlertCircle,
@@ -15,13 +15,17 @@ import {
   GitBranch,
   MessageSquareText,
   MoreHorizontal,
+  Pause,
   PenLine,
+  Play,
+  LayoutDashboard,
   Settings,
   SquarePen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuRadioGroup,
@@ -62,22 +66,33 @@ export interface AgentNavItem {
     label: string;
     title: string;
   };
-  kind?: "implementation" | "review" | "approval" | "thread";
+  kind?: "dashboard" | "implementation" | "review" | "approval" | "thread" | "orchestration" | "new-orchestrator";
 }
 
 export type SidebarOrganization = "by-projects" | "chronological-list" | "worktree";
 export type ThreadSort = "createdAt" | "updatedAt";
+export type SidebarThreadTab = "workers" | "orchestrator";
 
 interface SidebarProps {
   status: BrainStatus;
   agents: AgentNavItem[];
   threads: AgentNavItem[];
+  orchestrations: AgentNavItem[];
+  projects: BrainProject[];
   activeAgentId: string | null;
+  activeThreadTab: SidebarThreadTab;
   collapsed: boolean;
+  schedulerState: string;
+  schedulerStatus: SchedulerStatus | null;
   onToggleCollapsed: () => void;
+  onStartAutomation: () => void;
+  onPauseAutomation: () => void;
   onAgentSelect: (agentId: string) => void;
+  onThreadTabChange: (tab: SidebarThreadTab) => void;
+  onNewOrchestration: () => void;
   onArchiveThread: (item: AgentNavItem) => void;
   onArchiveAllThreads: () => void;
+  onToggleProjectEnabled: (project: BrainProject, enabled: boolean) => void;
   onOpenSettings: () => void;
   sidebarOrganization: SidebarOrganization;
   onSidebarOrganizationChange: (organization: SidebarOrganization) => void;
@@ -89,12 +104,22 @@ export function Sidebar({
   status,
   agents,
   threads,
+  orchestrations,
+  projects,
   activeAgentId,
+  activeThreadTab,
   collapsed,
+  schedulerState,
+  schedulerStatus,
   onToggleCollapsed,
+  onStartAutomation,
+  onPauseAutomation,
   onAgentSelect,
+  onThreadTabChange,
+  onNewOrchestration,
   onArchiveThread,
   onArchiveAllThreads,
+  onToggleProjectEnabled,
   onOpenSettings,
   sidebarOrganization,
   onSidebarOrganizationChange,
@@ -103,12 +128,13 @@ export function Sidebar({
 }: SidebarProps) {
   const sidebarWidth = collapsed ? "w-[68px]" : "w-[326px]";
   const [visibleThreadCount, setVisibleThreadCount] = useState(initialThreadDisplayCount);
-  const visibleThreads = threads.slice(0, visibleThreadCount);
-  const hasMoreThreads = visibleThreads.length < threads.length;
+  const activeList = activeThreadTab === "workers" ? threads : orchestrations;
+  const visibleThreads = activeList.slice(0, visibleThreadCount);
+  const hasMoreThreads = visibleThreads.length < activeList.length;
 
   useEffect(() => {
     setVisibleThreadCount(initialThreadDisplayCount);
-  }, [sidebarOrganization, threadSort]);
+  }, [activeThreadTab, sidebarOrganization, threadSort]);
 
   return (
     <TooltipProvider>
@@ -118,26 +144,30 @@ export function Sidebar({
           sidebarWidth,
         )}
       >
-        <div data-tauri-drag-region className="flex h-[60px] shrink-0 items-center gap-2 px-3">
+        <div className={cn("shrink-0 px-3", collapsed ? "h-[44px]" : "h-[60px]")}>
+          <div
+            data-tauri-drag-region
+            className={cn("w-full", collapsed ? "h-[15px]" : "h-full")}
+            aria-hidden="true"
+          />
           {collapsed ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={onToggleCollapsed}
-                  className="rounded-md border-transparent bg-transparent text-zinc-400 shadow-none hover:bg-white/[0.06] hover:text-zinc-50"
-                >
-                  {collapsed ? <ChevronRight className="size-4" /> : <ChevronLeft className="size-4" />}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>{collapsed ? "Expand sidebar" : "Collapse sidebar"}</TooltipContent>
-            </Tooltip>
+            <div className="flex h-[29px] items-center justify-center">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={onToggleCollapsed}
+                    className="rounded-md border-transparent bg-transparent text-zinc-400 shadow-none hover:bg-white/[0.06] hover:text-zinc-50"
+                  >
+                    {collapsed ? <ChevronRight className="size-4" /> : <ChevronLeft className="size-4" />}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{collapsed ? "Expand sidebar" : "Collapse sidebar"}</TooltipContent>
+              </Tooltip>
+            </div>
           ) : (
-            <>
-              <div className="w-[18px] shrink-0" aria-hidden="true" />
-              <div className="min-w-0 flex-1" aria-hidden="true" />
-            </>
+            null
           )}
         </div>
 
@@ -157,22 +187,37 @@ export function Sidebar({
         <div className="flex min-h-0 flex-1 flex-col pl-3 pb-3">
           <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto pr-1">
             <div className={cn("mb-1 flex h-8 shrink-0 items-center gap-2 px-3", collapsed && "hidden")}>
-              <h2 className="min-w-0 flex-1 truncate text-sm font-medium leading-none text-zinc-500">
-                All Threads
-              </h2>
+              <div className="flex min-w-0 flex-1 items-center gap-3">
+                <ThreadTabButton
+                  label="Workers"
+                  active={activeThreadTab === "workers"}
+                  onSelect={() => onThreadTabChange("workers")}
+                />
+                <ThreadTabButton
+                  label="Orchestrator"
+                  active={activeThreadTab === "orchestrator"}
+                  onSelect={() => onThreadTabChange("orchestrator")}
+                />
+              </div>
               <SidebarHeaderActions
+                activeThreadTab={activeThreadTab}
                 organization={sidebarOrganization}
                 onOrganizationChange={onSidebarOrganizationChange}
                 sort={threadSort}
                 onSortChange={onThreadSortChange}
                 onArchiveAllThreads={onArchiveAllThreads}
                 onOpenSettings={onOpenSettings}
+                projects={projects}
+                onToggleProjectEnabled={onToggleProjectEnabled}
                 onOpenImplementation={() => onAgentSelect("implementation")}
+                onNewOrchestration={onNewOrchestration}
               />
             </div>
-            {threads.length === 0 ? (
+            {activeList.length === 0 ? (
               <div className={cn("rounded-md px-3 py-2 text-sm text-zinc-500", collapsed && "hidden")}>
-                Agent threads will appear here.
+                {activeThreadTab === "workers"
+                  ? "Agent threads will appear here."
+                  : "Orchestration chats will appear here."}
               </div>
             ) : (
               visibleThreads.map((thread, index) => {
@@ -203,7 +248,7 @@ export function Sidebar({
                 variant="ghost"
                 size="sm"
                 type="button"
-                onClick={() => setVisibleThreadCount((count) => Math.min(count + initialThreadDisplayCount, threads.length))}
+                onClick={() => setVisibleThreadCount((count) => Math.min(count + initialThreadDisplayCount, activeList.length))}
                 className="mt-1 h-8 w-full justify-start gap-2 rounded-md border-transparent bg-transparent px-3 text-sm font-medium leading-none text-zinc-500 shadow-none hover:bg-white/[0.055] hover:text-zinc-300 focus-visible:bg-white/[0.055]"
               >
                 <span className="min-w-0 flex-1 truncate text-left">Show more</span>
@@ -214,28 +259,107 @@ export function Sidebar({
         </div>
 
         <div className="shrink-0 p-3">
-          <Button
-            variant="ghost"
-            size="sm"
-            type="button"
-            onClick={onOpenSettings}
-            className={cn(
-              sidebarGhostButtonClass,
-                "h-8 justify-start gap-3 px-3 text-[13px] font-normal",
-              collapsed && "justify-center px-0",
-            )}
-          >
-            <Settings className="size-4" />
-            {!collapsed && (
-              <>
-                <span className="flex-1 text-left">Settings</span>
-                <span className="text-xs text-zinc-500">{status.activeRuns} active</span>
-              </>
-            )}
-          </Button>
+          <div className={cn("flex items-center gap-1.5", collapsed && "flex-col")}>
+            <Button
+              variant="ghost"
+              size="sm"
+              type="button"
+              onClick={onOpenSettings}
+              className={cn(
+                sidebarGhostButtonClass,
+                "h-8 min-w-0 flex-1 justify-start gap-3 px-3 text-[13px] font-normal",
+                collapsed && "w-full justify-center px-0",
+              )}
+            >
+              <Settings className="size-4" />
+              {!collapsed && (
+                <>
+                  <span className="flex-1 text-left">Settings</span>
+                  <span className="text-xs text-zinc-500">{automationUsagePercent(schedulerStatus, status)}%</span>
+                </>
+              )}
+            </Button>
+            <AutomationIconToggle
+              schedulerState={schedulerState}
+              onStartAutomation={onStartAutomation}
+              onPauseAutomation={onPauseAutomation}
+            />
+          </div>
         </div>
       </aside>
     </TooltipProvider>
+  );
+}
+
+function AutomationIconToggle({
+  schedulerState,
+  onStartAutomation,
+  onPauseAutomation,
+}: {
+  schedulerState: string;
+  onStartAutomation: () => void;
+  onPauseAutomation: () => void;
+}) {
+  const running = schedulerState === "running";
+  const Icon = running ? Pause : Play;
+  const label = running ? "Pause automation" : "Start automation";
+  const tone = running ? "text-emerald-300" : schedulerState === "error" ? "text-red-300" : "text-zinc-300";
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          type="button"
+          onClick={running ? onPauseAutomation : onStartAutomation}
+          className="size-8 shrink-0 rounded-md border-transparent bg-transparent text-zinc-400 shadow-none hover:bg-white/[0.06] hover:text-zinc-50"
+          aria-label={label}
+        >
+          <Icon className={cn("size-4", tone)} />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+function automationUsagePercent(schedulerStatus: SchedulerStatus | null, status: BrainStatus) {
+  if (!schedulerStatus) {
+    const total = status.activeRuns + status.queuedItems + status.submittedItems + status.blockedItems;
+    return total > 0 ? Math.min(100, Math.round((status.activeRuns / total) * 100)) : 0;
+  }
+
+  const active = schedulerStatus.activeImplementationAgents + schedulerStatus.activeReviewAgents;
+  const capacity = schedulerStatus.maxImplementationAgents + schedulerStatus.maxReviewAgents;
+  if (capacity <= 0) {
+    return 0;
+  }
+  return Math.min(100, Math.round((active / capacity) * 100));
+}
+
+function ThreadTabButton({
+  label,
+  active,
+  onSelect,
+}: {
+  label: string;
+  active: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      type="button"
+      onClick={onSelect}
+      className={cn(
+        "h-auto min-w-0 rounded-none border-transparent bg-transparent p-0 text-sm font-normal leading-none text-zinc-500 shadow-none transition-colors hover:bg-transparent hover:text-zinc-300 focus-visible:bg-transparent focus-visible:text-zinc-200",
+        active && "font-semibold text-zinc-100",
+      )}
+    >
+      {label}
+    </Button>
   );
 }
 
@@ -254,7 +378,7 @@ function SidebarItem({
   onSelect: () => void;
   onArchiveThread?: (item: AgentNavItem) => void;
 }) {
-  if (item.kind === "thread") {
+  if (item.kind === "thread" || item.kind === "orchestration") {
     return (
       <ThreadSidebarItem
         item={item}
@@ -342,7 +466,13 @@ function ActionSidebarItem({
       )}
     >
       {collapsed ? (
-        <span className="text-xs font-medium">{item.name.slice(0, 1)}</span>
+        item.kind === "dashboard" ? (
+          <LayoutDashboard className="size-4" />
+        ) : item.kind === "new-orchestrator" ? (
+          <SquarePen className="size-4" />
+        ) : (
+          <span className="text-xs font-medium">{item.name.slice(0, 1)}</span>
+        )
       ) : (
         <>
           <span className="min-w-0 flex-1 truncate">{item.name}</span>
@@ -460,6 +590,9 @@ function ThreadSidebarItem({
         <MessageSquareText className="size-3.5" />
       ) : (
         <>
+          {state.blocked && (
+            <AlertCircle className="size-4 shrink-0 text-red-400" />
+          )}
           <span className="min-w-0 flex-1 truncate text-[13px] leading-none text-zinc-200">
             {item.name}
           </span>
@@ -468,7 +601,7 @@ function ThreadSidebarItem({
             <span
               className={cn(
                 "flex shrink-0 items-center justify-end gap-1 text-xs leading-none text-zinc-500",
-                rowHovered && "opacity-0",
+                rowHovered && "hidden",
               )}
             >
               {item.alert && <PermissionFlag title={item.alert.title} />}
@@ -551,28 +684,32 @@ function ThreadHoverActions({
         visible ? "flex" : "hidden",
       )}
     >
-      <button
+      <Button
+        variant="ghost"
+        size="icon-xs"
         type="button"
         aria-label="Thread"
         onClick={handleOpen}
-        className="pointer-events-auto inline-flex size-5 items-center justify-center rounded-[5px] text-zinc-400 transition-colors hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40"
+        className="pointer-events-auto size-5 rounded-[5px] border-transparent bg-transparent text-zinc-400 shadow-none transition-colors hover:bg-transparent hover:text-zinc-100 focus-visible:bg-transparent focus-visible:ring-2 focus-visible:ring-sky-500/40"
       >
         <MessageSquareText className="size-3" />
-      </button>
-      <button
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-xs"
         type="button"
         aria-label={canArchive ? "Archive" : "Archive unavailable"}
         aria-disabled={!canArchive}
         onClick={handleArchive}
         className={cn(
-          "pointer-events-auto inline-flex size-5 items-center justify-center rounded-[5px] text-zinc-400 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40",
+          "pointer-events-auto size-5 rounded-[5px] border-transparent bg-transparent text-zinc-400 shadow-none transition-colors hover:bg-transparent focus-visible:bg-transparent focus-visible:ring-2 focus-visible:ring-sky-500/40",
           canArchive
             ? "hover:text-zinc-100"
             : "cursor-default opacity-40",
         )}
       >
         <Archive className="size-3" />
-      </button>
+      </Button>
     </div>
   );
 }
@@ -615,21 +752,29 @@ function ThreadHoverPreviewRow({
 }
 
 function SidebarHeaderActions({
+  activeThreadTab,
   organization,
   onOrganizationChange,
   sort,
   onSortChange,
   onArchiveAllThreads,
   onOpenImplementation,
+  onNewOrchestration,
   onOpenSettings,
+  projects,
+  onToggleProjectEnabled,
 }: {
+  activeThreadTab: SidebarThreadTab;
   organization: SidebarOrganization;
   onOrganizationChange: (organization: SidebarOrganization) => void;
   sort: ThreadSort;
   onSortChange: (sort: ThreadSort) => void;
   onArchiveAllThreads: () => void;
   onOpenImplementation: () => void;
+  onNewOrchestration: () => void;
   onOpenSettings: () => void;
+  projects: BrainProject[];
+  onToggleProjectEnabled: (project: BrainProject, enabled: boolean) => void;
 }) {
   const menuItemClass = "h-9 gap-2.5 px-2.5 text-[13px] text-zinc-200 focus:bg-white/[0.08] focus:text-zinc-50 [&_svg]:text-zinc-400";
   const menuRadioClass = "h-9 gap-2.5 px-2.5 pr-8 text-[13px] text-zinc-200 focus:bg-white/[0.08] focus:text-zinc-50 [&_svg]:text-zinc-400";
@@ -654,6 +799,31 @@ function SidebarHeaderActions({
             <span>Archive all threads</span>
           </DropdownMenuItem>
           <DropdownMenuSeparator className="bg-white/[0.08]" />
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger className={menuItemClass}>
+              <Folder className="size-4" />
+              <span>Active projects</span>
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className={subContentClass}>
+              {projects.length === 0 ? (
+                <DropdownMenuItem className={menuItemClass} disabled>
+                  <span>No projects</span>
+                </DropdownMenuItem>
+              ) : (
+                projects.map((project) => (
+                  <DropdownMenuCheckboxItem
+                    key={project.id}
+                    className={menuRadioClass}
+                    checked={project.enabled}
+                    onCheckedChange={(checked) => onToggleProjectEnabled(project, Boolean(checked))}
+                    onSelect={(event) => event.preventDefault()}
+                  >
+                    <span className="min-w-0 flex-1 truncate">{project.name}</span>
+                  </DropdownMenuCheckboxItem>
+                ))
+              )}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
           <DropdownMenuSub>
             <DropdownMenuSubTrigger className={menuItemClass}>
               <Folder className="size-4" />
@@ -722,13 +892,13 @@ function SidebarHeaderActions({
           <Button
             variant="ghost"
             size="icon-xs"
-            onClick={onOpenImplementation}
+            onClick={activeThreadTab === "orchestrator" ? onNewOrchestration : onOpenImplementation}
             className={sidebarIconGhostButtonClass}
           >
             <SquarePen className="size-3" />
           </Button>
         </TooltipTrigger>
-        <TooltipContent>New implementation</TooltipContent>
+        <TooltipContent>{activeThreadTab === "orchestrator" ? "New orchestration" : "New implementation"}</TooltipContent>
       </Tooltip>
     </div>
   );
@@ -773,7 +943,7 @@ function getThreadState(item: AgentNavItem, active: boolean): ThreadState {
       done: false,
       unread: false,
       blocked: false,
-      showPill: true,
+      showPill: false,
       hasRightIndicator: true,
     };
   }
@@ -786,7 +956,7 @@ function getThreadState(item: AgentNavItem, active: boolean): ThreadState {
       done: false,
       unread: false,
       blocked: false,
-      showPill: true,
+      showPill: false,
       hasRightIndicator: true,
     };
   }
@@ -799,7 +969,7 @@ function getThreadState(item: AgentNavItem, active: boolean): ThreadState {
       done: false,
       unread: false,
       blocked: true,
-      showPill: true,
+      showPill: false,
       hasRightIndicator: true,
     };
   }
@@ -825,7 +995,7 @@ function getThreadState(item: AgentNavItem, active: boolean): ThreadState {
       done: false,
       unread: false,
       blocked: false,
-      showPill: true,
+      showPill: false,
       hasRightIndicator: true,
     };
   }
@@ -860,7 +1030,7 @@ function ThreadStatePill({ state, hidden }: { state: ThreadState; hidden?: boole
     <span
       className={cn(
         "max-w-[154px] shrink-0 truncate rounded-full px-2 py-1 text-[13px] font-medium leading-none",
-        hidden && "opacity-0",
+        hidden && "hidden",
         state.tone === "running" && "bg-emerald-500/20 text-emerald-300",
         state.tone === "success" && "bg-sky-500/15 text-sky-300",
         state.tone === "warning" && "bg-amber-500/15 text-amber-300",
@@ -884,7 +1054,7 @@ function ThreadRightIndicator({ state, timeLabel }: { state: ThreadState; timeLa
   }
 
   if (state.blocked) {
-    return <AlertCircle className="size-4 text-red-300" />;
+    return timeLabel ? <span className="tabular-nums">{timeLabel}</span> : null;
   }
 
   return timeLabel ? <span className="tabular-nums">{timeLabel}</span> : null;

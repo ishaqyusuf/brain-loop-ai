@@ -224,7 +224,14 @@ pub fn run_process(
                     }
                 } else if let Some(qid) = &initial_meta.queue_item_id {
                     if let Ok(Some(mut item)) = crate::brain::read_queue_item(qid) {
+                        let is_review_runner = initial_meta
+                            .agent
+                            .as_deref()
+                            .map(|agent| agent.contains("review"))
+                            .unwrap_or(false);
                         let mut should_request_review = item.status == "submitted";
+                        let mut should_request_fix_implementation = false;
+                        let mut should_fill_review_pool = false;
                         if item.status == "started" {
                             let detail = "Implementation runner exited successfully.";
                             let _ = crate::brain::update_queue_item_status(
@@ -239,6 +246,7 @@ pub fn run_process(
                             sync_thread_from_queue_item(&item);
                             should_request_review = true;
                         } else if item.status == "reviewing" {
+                            should_fill_review_pool = true;
                             let detail = "Review runner exited successfully but left queue item in reviewing; review result was not written. Manual reconciliation is required.";
                             item.last_error = Some(detail.to_string());
                             item.waiting_reason = None;
@@ -253,10 +261,41 @@ pub fn run_process(
                             let _ = crate::brain::write_queue_item(&item);
                             sync_thread_from_queue_item(&item);
                         } else if item.status == "landing" {
+                            should_fill_review_pool = true;
                             let _ = crate::landing::apply_landing_policy(&app, &item);
+                        } else if item.status == "reviewed-fix-request" && is_review_runner {
+                            should_request_fix_implementation = true;
+                            should_fill_review_pool = true;
+                        } else if is_review_runner {
+                            should_fill_review_pool = true;
                         }
 
+                        let automation_running =
+                            crate::scheduler::SCHEDULER.get_state().as_deref() == Ok("running");
+
                         if should_request_review {
+                            if automation_running {
+                                let _ = crate::run_review_once(app.clone());
+                            } else {
+                                crate::scheduler::log_decision(&format!(
+                                    "FOLLOW-UP SKIP: queue={} review follow-up skipped because automation is not running",
+                                    qid
+                                ));
+                            }
+                        }
+
+                        if should_request_fix_implementation {
+                            if automation_running {
+                                let _ = crate::run_implementation_once(app.clone());
+                            } else {
+                                crate::scheduler::log_decision(&format!(
+                                    "FOLLOW-UP SKIP: queue={} fix follow-up skipped because automation is not running",
+                                    qid
+                                ));
+                            }
+                        }
+
+                        if should_fill_review_pool && automation_running {
                             let _ = crate::run_review_once(app.clone());
                         }
                     }

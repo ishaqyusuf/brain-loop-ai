@@ -1,11 +1,13 @@
-import { useMemo, useState } from "react";
-import type { BrainProject, QueueItem } from "@brain-loop/brain-core";
+import { useMemo, useState, type ReactNode } from "react";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import type { BrainProject, ProjectFolderInspection, QueueItem } from "@brain-loop/brain-core";
 import {
   createProject,
+  inspectProjectFolder,
   setProjectEnabled,
   updateProject,
 } from "@brain-loop/desktop-client";
-import { AlertCircle, CheckCircle2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, FolderOpen } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -38,7 +40,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-type EditableProject = Omit<BrainProject, "pathExists">;
+type EditableProject = Omit<BrainProject, "pathExists" | "brainPathExists">;
 
 interface ProjectTableProps {
   projects: BrainProject[];
@@ -68,6 +70,8 @@ const emptyProject: EditableProject = {
   implementationIntervalMinutes: 2,
   priority: "medium",
   autoMergeOnReviewPass: false,
+  brainPath: null,
+  brainStorage: null,
 };
 
 function toEditableProject(project: BrainProject): EditableProject {
@@ -81,6 +85,8 @@ function toEditableProject(project: BrainProject): EditableProject {
     implementationIntervalMinutes: project.implementationIntervalMinutes,
     priority: project.priority,
     autoMergeOnReviewPass: project.autoMergeOnReviewPass ?? false,
+    brainPath: project.brainPath ?? null,
+    brainStorage: project.brainStorage ?? null,
   };
 }
 
@@ -118,10 +124,12 @@ export function ProjectTable({
   const [form, setForm] = useState<EditableProject>(emptyProject);
   const [formError, setFormError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [inspection, setInspection] = useState<ProjectFolderInspection | null>(null);
   const [confirmProject, setConfirmProject] = useState<BrainProject | null>(
     null,
   );
   const [isSaving, setIsSaving] = useState(false);
+  const [isPickingFolder, setIsPickingFolder] = useState(false);
 
   const summary = useMemo(() => {
     return {
@@ -136,12 +144,13 @@ export function ProjectTable({
     };
   }, [projects, queueItems]);
 
-  function openCreateSheet() {
+  async function openCreateSheet() {
     setMode("create");
     setForm(emptyProject);
     setFormError(null);
     setActionError(null);
-    setSheetOpen(true);
+    setInspection(null);
+    await chooseProjectFolder({ openSheet: true, preserveId: false });
   }
 
   function openEditSheet(project: BrainProject) {
@@ -149,7 +158,56 @@ export function ProjectTable({
     setForm(toEditableProject(project));
     setFormError(null);
     setActionError(null);
+    setInspection(null);
     setSheetOpen(true);
+  }
+
+  async function chooseProjectFolder({
+    openSheet,
+    preserveId = mode === "edit",
+  }: {
+    openSheet: boolean;
+    preserveId?: boolean;
+  }) {
+    setIsPickingFolder(true);
+    setFormError(null);
+    try {
+      const selected = await openDialog({
+        directory: true,
+        multiple: false,
+        title: "Select project folder",
+      });
+      if (typeof selected !== "string") {
+        if (openSheet) {
+          setSheetOpen(true);
+        }
+        return;
+      }
+
+      const nextInspection = await inspectProjectFolder({
+        path: selected,
+        existingProjectIds: projects.map((project) => project.id),
+      });
+      setInspection(nextInspection);
+      setForm((current) => ({
+        ...current,
+        id: preserveId ? current.id : nextInspection.id,
+        name: nextInspection.name,
+        path: nextInspection.path,
+        brainPath: nextInspection.brainPath,
+        brainStorage: nextInspection.brainStorage,
+      }));
+      if (openSheet) {
+        setSheetOpen(true);
+      }
+    } catch (e) {
+      setFormError(String(e));
+      if (openSheet) {
+        setSheetOpen(true);
+      }
+    } finally {
+      setIsPickingFolder(false);
+    }
   }
 
   async function submitForm() {
@@ -209,7 +267,7 @@ export function ProjectTable({
                 <TableHead>Status</TableHead>
                 <TableHead>Agent</TableHead>
                 <TableHead>Priority</TableHead>
-                <TableHead>Landing</TableHead>
+                <TableHead>Approval</TableHead>
                 <TableHead>Path</TableHead>
               </TableRow>
             </TableHeader>
@@ -283,11 +341,11 @@ export function ProjectTable({
         <ProjectMetric title="Enabled" value={summary.enabled} />
         <ProjectMetric title="Disabled" value={summary.disabled} />
         <ProjectMetric title="Missing Paths" value={summary.missingPaths} />
-        <ProjectMetric title="Active Disabled" value={summary.activeDisabled} />
+        <ProjectMetric title="Manual Approval" value={projects.filter((project) => !project.autoMergeOnReviewPass).length} />
       </div>
 
       <div className="flex justify-end">
-        <Button size="sm" onClick={openCreateSheet}>
+        <Button size="sm" onClick={() => void openCreateSheet()}>
           Add Project
         </Button>
       </div>
@@ -301,7 +359,7 @@ export function ProjectTable({
               <TableHead>Agent</TableHead>
               <TableHead>Priority</TableHead>
               <TableHead>Intervals</TableHead>
-              <TableHead>Landing</TableHead>
+              <TableHead>Approval</TableHead>
               <TableHead>Path</TableHead>
               <TableHead>Warnings</TableHead>
               <TableHead className="text-right">Actions</TableHead>
@@ -353,8 +411,8 @@ export function ProjectTable({
                         }
                       >
                         {project.autoMergeOnReviewPass
-                          ? "Auto merge"
-                          : "Request merge"}
+                          ? "Automatic"
+                          : "Manual"}
                       </Badge>
                     </TableCell>
                     <TableCell className="max-w-[280px] break-all text-xs">
@@ -475,7 +533,45 @@ export function ProjectTable({
               onChange={(value) =>
                 setForm((current) => ({ ...current, path: value }))
               }
+              action={
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="h-8 gap-1.5"
+                  disabled={isPickingFolder || isSaving}
+                  onClick={() => void chooseProjectFolder({ openSheet: false })}
+                >
+                  <FolderOpen className="size-3.5" />
+                  Choose
+                </Button>
+              }
             />
+
+            {(inspection || form.brainPath) && (
+              <Alert>
+                <CheckCircle2 className="size-4" />
+                <AlertTitle>
+                  {form.brainStorage === "project"
+                    ? "Project Brain detected"
+                    : "External Brain will be prepared"}
+                </AlertTitle>
+                <AlertDescription className="space-y-1 break-words">
+                  <div>
+                    Brain path:{" "}
+                    <span className="font-mono text-xs">{form.brainPath}</span>
+                  </div>
+                  {inspection && (
+                    <div>
+                      Instruction files:{" "}
+                      <span className="font-mono text-xs">
+                        {inspection.instructionFiles.join(", ")}
+                      </span>
+                    </div>
+                  )}
+                </AlertDescription>
+              </Alert>
+            )}
 
             <FormItem>
               <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
@@ -567,18 +663,33 @@ export function ProjectTable({
               Enabled for automation
             </Label>
 
-            <Label className="flex items-center gap-2 text-sm">
-              <Checkbox
-                checked={form.autoMergeOnReviewPass ?? false}
-                onCheckedChange={(checked) =>
+            <FormItem>
+              <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Approval Mode
+              </Label>
+              <Select
+                value={form.autoMergeOnReviewPass ? "automatic" : "manual"}
+                onValueChange={(value) =>
                   setForm((current) => ({
                     ...current,
-                    autoMergeOnReviewPass: checked === true,
+                    autoMergeOnReviewPass: value === "automatic",
                   }))
                 }
-              />
-              Auto merge when review passes
-            </Label>
+              >
+                <FormControl>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                </FormControl>
+                <SelectContent>
+                  <SelectItem value="manual">Manual</SelectItem>
+                  <SelectItem value="automatic">Automatic</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs leading-5 text-muted-foreground">
+                Manual keeps review-passed work in approvals; automatic lands approved work immediately when policy checks pass.
+              </p>
+            </FormItem>
 
             <div className="flex justify-end gap-2 pt-2">
               <Button
@@ -621,18 +732,23 @@ function ProjectField({
   onChange,
   disabled,
   type = "text",
+  action,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   disabled?: boolean;
   type?: string;
+  action?: ReactNode;
 }) {
   return (
     <FormItem>
-      <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-        {label}
-      </Label>
+      <div className="flex items-center justify-between gap-2">
+        <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          {label}
+        </Label>
+        {action}
+      </div>
       <FormControl>
         <Input
           disabled={disabled}

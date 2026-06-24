@@ -26,6 +26,10 @@ pub struct QueueHistoryEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueueItem {
     pub id: String,
+    #[serde(rename = "orchestrationId", default, skip_serializing_if = "Option::is_none")]
+    pub orchestration_id: Option<String>,
+    #[serde(rename = "orchestrationTitle", default, skip_serializing_if = "Option::is_none")]
+    pub orchestration_title: Option<String>,
     #[serde(
         rename = "threadTitle",
         alias = "threadName",

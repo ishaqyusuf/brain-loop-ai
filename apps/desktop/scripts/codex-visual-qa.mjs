@@ -25,6 +25,11 @@ function includesAll(content, terms) {
 const appSource = read("src/app.tsx");
 const logoSource = read("src/components/brain-loop-logo.tsx");
 const sidebarSource = read("src/components/sidebar.tsx");
+const dashboardSource = read("src/components/dashboard/dashboard-view.tsx");
+const orchestrationStartSource = read("src/components/orchestration/orchestration-start-view.tsx");
+const threadWorkspaceSource = read("src/components/thread-workspace/thread-workspace.tsx");
+const workspaceSource = read("src/components/workspace/workspace-shell.tsx");
+const sidebarViewModelSource = read("src/hooks/use-sidebar-view-model.ts");
 const dropdownMenuSource = read("src/components/ui/dropdown-menu.tsx");
 const settingsSource = read("src/components/settings/settings-page.tsx");
 const styles = read("src/styles.css");
@@ -44,13 +49,17 @@ addCheck(
 
 addCheck(
   "Headless Codex shell",
-  appSource.includes("<EmptyHome />") &&
-    appSource.includes("relative flex h-screen min-w-0 flex-1 overflow-hidden bg-[#141414]") &&
-    appSource.includes("data-tauri-drag-region") &&
-    !appSource.includes("Overview") &&
-    !appSource.includes("Dashboard"),
-  "The workspace should render as a headless shell with draggable overlay chrome, not a dashboard page.",
-  ["src/app.tsx"],
+  workspaceSource.includes("<EmptyHome />") &&
+    workspaceSource.includes("relative flex h-screen min-w-0 flex-1 overflow-hidden bg-[#141414]") &&
+    threadWorkspaceSource.includes("data-tauri-drag-region") &&
+    !workspaceSource.includes("Overview") &&
+    dashboardSource.includes("function DashboardView"),
+  "The workspace should render as a headless shell with draggable overlay chrome and the requested operational dashboard surface, not the old product tab frame.",
+  [
+    "src/components/workspace/workspace-shell.tsx",
+    "src/components/thread-workspace/thread-workspace.tsx",
+    "src/components/dashboard/dashboard-view.tsx",
+  ],
 );
 
 addCheck(
@@ -68,10 +77,12 @@ addCheck(
   "Fixed top sidebar actions",
   sidebarSource.includes("agents.map((agent)") &&
     sidebarSource.includes("ActionSidebarItem") &&
+    sidebarSource.includes("new-orchestrator") &&
+    sidebarSource.includes("automationUsagePercent") &&
     sidebarSource.includes("fixed") &&
     sidebarSource.includes("data-tauri-drag-region") &&
     sidebarSource.includes("overflow-y-auto"),
-  "Review, Implementation, and Approval should remain fixed below the draggable native chrome area.",
+  "Dashboard, New Orchestrator, Review, Implementation, and Approval should remain fixed below the draggable native chrome area, with play/pause in the compact footer status slot.",
   ["src/components/sidebar.tsx"],
 );
 
@@ -105,22 +116,29 @@ addCheck(
     sidebarSource.includes("flex-1 truncate") &&
     sidebarSource.includes("1500") &&
     sidebarSource.includes("initialThreadDisplayCount = 10") &&
-    sidebarSource.includes("visibleThreads = threads.slice(0, visibleThreadCount)") &&
+    sidebarSource.includes("visibleThreads = activeList.slice(0, visibleThreadCount)") &&
     sidebarSource.includes("Show more") &&
-    appSource.includes("taskBackedThreadStatuses") &&
-    appSource.includes("isTaskBackedThreadStatus(item.status)") &&
-    appSource.includes("Thread not found for task") &&
-    appSource.includes("return sortThreadNavItems([...durableThreads, ...taskThreads], sidebarOrganization, threadSort)") &&
-    !appSource.includes("queueItems.slice(0, 50).map") &&
+    sidebarViewModelSource.includes("taskBackedThreadStatuses") &&
+    sidebarViewModelSource.includes("\"picked\"") &&
+    !sidebarViewModelSource.includes("\"queued\",\n  \"picked\"") &&
+    sidebarViewModelSource.includes("isTaskBackedThreadStatus(item.status)") &&
+    threadWorkspaceSource.includes("Thread not found for task") &&
+    sidebarViewModelSource.includes("return sortThreadNavItems([...durableThreads, ...taskThreads], sidebarOrganization, threadSort)") &&
+    !sidebarViewModelSource.includes("queueItems.slice(0, 50).map") &&
     !sidebarSource.includes("rounded-xl border"),
-  "Thread rows should stay flat title-only rows with compact runtime labels, delayed hover details, started-or-later task-backed rows, and no queued-task fallback in the thread rail.",
-  ["src/components/sidebar.tsx", "src/app.tsx"],
+  "Thread rows should stay flat title-only rows with compact runtime labels, delayed hover details, and queue-backed worker rows only after work is picked or later.",
+  [
+    "src/components/sidebar.tsx",
+    "src/hooks/use-sidebar-view-model.ts",
+    "src/components/thread-workspace/thread-workspace.tsx",
+  ],
 );
 
 addCheck(
   "Thread more menu actions",
   includesAll(sidebarSource, [
     "Archive all threads",
+    "Active projects",
     "Organize sidebar",
     "By Projects",
     "Chronological List",
@@ -131,7 +149,47 @@ addCheck(
   ]) &&
     !sidebarSource.includes("Collapse sidebar</DropdownMenuItem>") &&
     !sidebarSource.includes(">Approvals</DropdownMenuItem>"),
-  "The All Threads More menu should stay scoped to archive, organize, and sort actions.",
+  "The thread More menu should stay scoped to archive, project eligibility, organize, and sort actions.",
+  ["src/components/sidebar.tsx"],
+);
+
+addCheck(
+  "Minimal Workers and Orchestrator tabs",
+  sidebarSource.includes("type SidebarThreadTab = \"workers\" | \"orchestrator\"") &&
+    sidebarSource.includes("label=\"Workers\"") &&
+    sidebarSource.includes("label=\"Orchestrator\"") &&
+    sidebarSource.includes("active && \"font-semibold text-zinc-100\"") &&
+    sidebarSource.includes("onNewOrchestration") &&
+    sidebarViewModelSource.includes("function handleNewOrchestration()") &&
+    sidebarViewModelSource.includes("setActiveThreadTab(\"orchestrator\")") &&
+    sidebarViewModelSource.includes("setActiveAgentId(null)"),
+  "The sidebar should use simple text tabs and New in Orchestrator should open the Codex-like start composer.",
+  ["src/components/sidebar.tsx", "src/hooks/use-sidebar-view-model.ts"],
+);
+
+addCheck(
+  "Codex-like Orchestrator project dropdown",
+  orchestrationStartSource.includes("function ProjectDropdown") &&
+    orchestrationStartSource.includes("trigger: \"title\" | \"pill\"") &&
+    orchestrationStartSource.includes("placeholder=\"Search projects\"") &&
+    orchestrationStartSource.includes("Add new project") &&
+    orchestrationStartSource.includes("Start from scratch") &&
+    orchestrationStartSource.includes("Use an existing folder") &&
+    orchestrationStartSource.includes("onKeyDown={(event) => event.stopPropagation()}") &&
+    !orchestrationStartSource.includes("Don't work in a project") &&
+    !orchestrationStartSource.includes("Don’t work in a project"),
+  "The Orchestrator start project selector should be available from the title and composer, support add-project actions, and omit no-project mode.",
+  ["src/components/orchestration/orchestration-start-view.tsx"],
+);
+
+addCheck(
+  "Simple thread loading and error states",
+  sidebarSource.includes("{state.blocked && (") &&
+    sidebarSource.includes("<AlertCircle className=\"size-4 shrink-0 text-red-400\" />") &&
+    sidebarSource.includes("return <Circle className=\"size-4 animate-spin fill-transparent text-zinc-500\" />") &&
+    sidebarSource.includes("showPill: false") &&
+    sidebarSource.includes("return timeLabel ? <span className=\"tabular-nums\">{timeLabel}</span> : null;"),
+  "Thread rows should keep loading/error treatment simple: spinner on the right, red error icon on the left, elapsed time on the right.",
   ["src/components/sidebar.tsx"],
 );
 
@@ -159,34 +217,34 @@ addCheck(
 
 addCheck(
   "Codex-like opened thread surface",
-  appSource.includes("function AgentThreadView") &&
-    appSource.includes("function ThreadIdentity") &&
-    appSource.includes("items-baseline") &&
-    appSource.includes("ThreadMessage") &&
-    appSource.includes("TranscriptCard") &&
-    appSource.includes("ArtifactCard") &&
-    !appSource.includes("<header className=\"flex h-12") &&
-    !appSource.includes("PanelRight") &&
-    !appSource.includes("MoreHorizontal"),
+  threadWorkspaceSource.includes("function AgentThreadView") &&
+    threadWorkspaceSource.includes("function ThreadIdentity") &&
+    threadWorkspaceSource.includes("items-baseline") &&
+    threadWorkspaceSource.includes("ThreadMessage") &&
+    threadWorkspaceSource.includes("TranscriptCard") &&
+    threadWorkspaceSource.includes("ArtifactCard") &&
+    !threadWorkspaceSource.includes("<header className=\"flex h-12") &&
+    !threadWorkspaceSource.includes("PanelRight") &&
+    !threadWorkspaceSource.includes("MoreHorizontal"),
   "Opened threads should keep identity in top chrome and render chat, transcript, and artifact surfaces without the stale h-12 app bar.",
-  ["src/app.tsx"],
+  ["src/components/thread-workspace/thread-workspace.tsx"],
 );
 
 addCheck(
   "Persisted timeline messages render",
-  appSource.includes("thread.messages") &&
-    appSource.includes("persistedMessages") &&
-    includesAll(appSource, ["role === \"approval\"", "role === \"artifact\"", "role === \"agent\""]),
+  threadWorkspaceSource.includes("thread.messages") &&
+    threadWorkspaceSource.includes("persistedMessages") &&
+    includesAll(threadWorkspaceSource, ["role === \"approval\"", "role === \"artifact\"", "role === \"agent\""]),
   "The chat timeline should render persisted thread messages with distinct role styling.",
-  ["src/app.tsx"],
+  ["src/components/thread-workspace/thread-workspace.tsx"],
 );
 
 addCheck(
   "Artifact and transcript text can wrap",
-  appSource.includes("break-all font-mono") &&
-    appSource.includes("whitespace-pre-wrap break-words"),
+  threadWorkspaceSource.includes("break-all font-mono") &&
+    threadWorkspaceSource.includes("whitespace-pre-wrap break-words"),
   "Long paths and transcript output must not overflow narrow thread surfaces.",
-  ["src/app.tsx"],
+  ["src/components/thread-workspace/thread-workspace.tsx"],
 );
 
 addCheck(

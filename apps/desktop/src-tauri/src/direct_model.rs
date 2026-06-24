@@ -1,8 +1,13 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
+use std::env;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,6 +114,39 @@ pub struct DirectModelHarnessRecordResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DirectModelTurnExecutionResult {
+    pub provider_request: DirectModelProviderRequest,
+    pub turn_id: String,
+    pub events: Vec<DirectModelTurnEvent>,
+    #[serde(default)]
+    pub harness_record: Option<DirectModelHarnessRecordResult>,
+    pub done: bool,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub usage: BTreeMap<String, String>,
+    pub raw_response_bytes: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectModelToolLoopInput {
+    pub turn_input: DirectModelTurnInput,
+    #[serde(default)]
+    pub max_iterations: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectModelToolLoopResult {
+    pub turns: Vec<DirectModelTurnExecutionResult>,
+    pub tool_results: Vec<DirectModelToolExecutionResult>,
+    pub approval_requests: Vec<DirectModelToolApprovalResult>,
+    pub completed: bool,
+    pub stopped_reason: String,
+    pub iterations: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DirectModelMessage {
     pub role: String,
     pub content: String,
@@ -170,6 +208,25 @@ pub struct DirectModelToolExecutionResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DirectModelToolApprovalResult {
+    pub approval_request: crate::approval::ApprovalRequest,
+    pub tool_execution_result: DirectModelToolExecutionResult,
+    #[serde(default)]
+    pub harness_event: Option<crate::harness::HarnessEventInput>,
+    #[serde(default)]
+    pub thread: Option<crate::agent_thread::AgentThread>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectModelApprovedToolExecutionInput {
+    pub approval_request_id: String,
+    #[serde(default)]
+    pub tool_execution: Option<DirectModelToolExecutionInput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectModelApprovedToolExecutionResult {
     pub approval_request: crate::approval::ApprovalRequest,
     pub tool_execution_result: DirectModelToolExecutionResult,
     #[serde(default)]
@@ -245,7 +302,7 @@ pub fn is_direct_provider_runner(runner_id: &str) -> bool {
 
 pub fn pending_runtime_error(runner_id: &str) -> String {
     format!(
-        "Direct model runner `{}` is cataloged, but the Brain Loop direct tool-loop runtime is not wired yet.",
+        "Direct model runner `{}` is cataloged, but this dispatch role is not wired to the Brain Loop direct runtime yet.",
         runner_id
     )
 }
@@ -342,7 +399,6 @@ pub fn tool_specs() -> Vec<DirectModelToolSpec> {
                 "properties": {
                     "pattern": { "type": "string" },
                     "path": { "type": "string" },
-                    "literal": { "type": "boolean" },
                     "maxResults": { "type": "integer", "minimum": 1, "maximum": 200 }
                 },
                 "additionalProperties": false
@@ -391,7 +447,7 @@ pub fn tool_specs() -> Vec<DirectModelToolSpec> {
                     "summary": { "type": "string" },
                     "queueStatus": {
                         "type": "string",
-                        "enum": ["submitted", "blocked", "reviewed-fix-request", "landing"]
+                        "enum": ["submitted", "reviewed-fix-request", "landing", "blocked"]
                     },
                     "lastError": { "type": "string" }
                 },
@@ -411,7 +467,7 @@ pub fn runtime_contract() -> DirectModelRuntimeContract {
             "apply_patch".to_string(),
             "run_command".to_string(),
         ],
-        pending_runtime: true,
+        pending_runtime: false,
     }
 }
 
@@ -462,6 +518,424 @@ pub fn build_provider_request(
         "gemini-generate-content" => build_gemini_generate_content_request(input, &provider),
         other => Err(format!("Direct model apiStyle is not implemented yet: {}", other)),
     }
+}
+
+pub async fn execute_provider_turn(
+    app: AppHandle,
+    input: DirectModelTurnInput,
+) -> Result<DirectModelTurnExecutionResult, String> {
+    let provider = validate_turn_input(&input)?;
+    let provider_request = build_provider_request(&input)?;
+    let turn_id = format!("direct-{}", chrono::Utc::now().timestamp_millis());
+    let start_event = direct_runtime_event(
+        &input,
+        &turn_id,
+        "turn.started",
+        Some("system"),
+        Some("Direct model turn started"),
+        BTreeMap::new(),
+    );
+    record_harness_events_from_direct_events(app.clone(), &[start_event.clone()])?;
+    let mut events = vec![start_event];
+    let api_key = match env::var(&provider_request.api_key_env) {
+        Ok(api_key) if !api_key.trim().is_empty() => api_key,
+        Ok(_) => {
+            let detail = format!(
+                "Direct model provider environment variable {} is empty.",
+                provider_request.api_key_env
+            );
+            record_direct_failure(app, &input, &turn_id, &mut events, detail.clone())?;
+            return Err(detail);
+        }
+        Err(_) => {
+            let detail = format!(
+                "Direct model provider requires environment variable {}.",
+                provider_request.api_key_env
+            );
+            record_direct_failure(app, &input, &turn_id, &mut events, detail.clone())?;
+            return Err(detail);
+        }
+    };
+
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(180))
+        .build()
+    {
+        Ok(client) => client,
+        Err(error) => {
+            let detail = format!("Failed to initialize direct model HTTP client: {}", error);
+            record_direct_failure(app, &input, &turn_id, &mut events, detail.clone())?;
+            return Err(detail);
+        }
+    };
+    let mut request = client
+        .post(provider_request.endpoint.as_str())
+        .header("Content-Type", "application/json")
+        .json(&provider_request.body);
+    match provider.api_style.as_str() {
+        "openai-chat" => {
+            request = request.bearer_auth(api_key);
+        }
+        "gemini-generate-content" => {
+            request = request.header("x-goog-api-key", api_key);
+        }
+        other => {
+            return Err(format!(
+                "Direct model HTTP execution is not implemented for apiStyle: {}",
+                other
+            ));
+        }
+    }
+
+    let response = match request.send().await {
+        Ok(response) => response,
+        Err(error) => {
+            record_direct_failure(app, &input, &turn_id, &mut events, error.to_string())?;
+            return Err(format!("Direct model provider request failed: {}", error));
+        }
+    };
+    let status = response.status();
+    let raw_response = match response.text().await {
+        Ok(raw_response) => raw_response,
+        Err(error) => {
+            let detail = format!("Failed to read direct model provider response: {}", error);
+            record_direct_failure(app, &input, &turn_id, &mut events, detail.clone())?;
+            return Err(detail);
+        }
+    };
+    let raw_response_bytes = raw_response.len();
+    if !status.is_success() {
+        let detail = truncate_for_error(&raw_response, 2_000);
+        record_direct_failure(
+            app,
+            &input,
+            &turn_id,
+            &mut events,
+            format!("Provider returned HTTP {}: {}", status, detail),
+        )?;
+        return Err(format!("Direct model provider returned HTTP {}: {}", status, detail));
+    }
+
+    let parse_input = DirectModelProviderStreamParseInput {
+        runner_id: input.runner_id.clone(),
+        provider_id: input.provider_id.clone(),
+        api_style: input.api_style.clone(),
+        model: input.model.clone(),
+        raw_chunk: raw_response,
+        queue_item_id: Some(input.queue_item_id.clone()),
+        thread_id: Some(input.thread_id.clone()),
+        turn_id: Some(turn_id.clone()),
+    };
+    let parsed = match parse_provider_stream_chunk(&parse_input) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            record_direct_failure(app, &input, &turn_id, &mut events, error.clone())?;
+            return Err(error);
+        }
+    };
+    let parsed_events = parsed.events;
+    let harness_record = if parsed_events.is_empty() {
+        None
+    } else {
+        Some(record_harness_events_from_direct_events(app, &parsed_events)?)
+    };
+    events.extend(parsed_events);
+
+    Ok(DirectModelTurnExecutionResult {
+        provider_request,
+        turn_id,
+        events,
+        harness_record,
+        done: parsed.done,
+        usage: parsed.usage,
+        raw_response_bytes,
+    })
+}
+
+pub async fn execute_provider_tool_loop(
+    app: AppHandle,
+    input: DirectModelToolLoopInput,
+) -> Result<DirectModelToolLoopResult, String> {
+    validate_turn_input(&input.turn_input)?;
+    let max_iterations = input.max_iterations.unwrap_or(4).clamp(1, 8);
+    let mut current_turn = input.turn_input;
+    let mut turns = Vec::new();
+    let mut tool_results = Vec::new();
+    let mut approval_requests = Vec::new();
+    let mut provider_tool_results = current_turn.tool_results.clone();
+
+    for iteration in 0..max_iterations {
+        let turn = execute_provider_turn(app.clone(), current_turn.clone()).await?;
+        let turn_id = turn.turn_id.clone();
+        let tool_calls = collect_tool_calls(&turn.events);
+        let turn_done = turn.done;
+        turns.push(turn);
+
+        if tool_calls.is_empty() {
+            return Ok(DirectModelToolLoopResult {
+                turns,
+                tool_results,
+                approval_requests,
+                completed: turn_done,
+                stopped_reason: if turn_done {
+                    "completed".to_string()
+                } else {
+                    "no_tool_calls".to_string()
+                },
+                iterations: iteration + 1,
+            });
+        }
+
+        for tool_call in tool_calls {
+            let execution_input = DirectModelToolExecutionInput {
+                execution_path: current_turn.execution_path.clone(),
+                tool_call: tool_call.clone(),
+                approval_policy: Some(current_turn.approval_policy.clone()),
+                queue_item_id: Some(current_turn.queue_item_id.clone()),
+                project_id: None,
+                runner_id: Some(current_turn.runner_id.clone()),
+                session_id: Some(turn_id.clone()),
+            };
+            let mut execution = execute_tool(&execution_input);
+            if execution.approval_required {
+                let approval = request_tool_approval_with_context(
+                    app.clone(),
+                    execution_input,
+                    &provider_tool_results,
+                )?;
+                tool_results.push(approval.tool_execution_result.clone());
+                approval_requests.push(approval);
+                return Ok(DirectModelToolLoopResult {
+                    turns,
+                    tool_results,
+                    approval_requests,
+                    completed: false,
+                    stopped_reason: "approval_required".to_string(),
+                    iterations: iteration + 1,
+                });
+            }
+
+            annotate_tool_result(&mut execution.tool_result, &tool_call);
+            let completion_event =
+                direct_tool_result_event(&current_turn, &turn_id, &execution.tool_result);
+            record_harness_events_from_direct_events(app.clone(), &[completion_event])?;
+            let is_finish_task = tool_call.name == "finish_task";
+            provider_tool_results.push(execution.tool_result.clone());
+            tool_results.push(execution);
+
+            if is_finish_task {
+                return Ok(DirectModelToolLoopResult {
+                    turns,
+                    tool_results,
+                    approval_requests,
+                    completed: true,
+                    stopped_reason: "finish_task".to_string(),
+                    iterations: iteration + 1,
+                });
+            }
+        }
+
+        current_turn.tool_results = provider_tool_results.clone();
+    }
+
+    Ok(DirectModelToolLoopResult {
+        turns,
+        tool_results,
+        approval_requests,
+        completed: false,
+        stopped_reason: "max_iterations".to_string(),
+        iterations: max_iterations,
+    })
+}
+
+#[derive(Debug, Clone)]
+struct PendingToolCall {
+    id: String,
+    stream_key: String,
+    name: String,
+    arguments_text: String,
+    arguments_value: Option<Value>,
+}
+
+fn collect_tool_calls(events: &[DirectModelTurnEvent]) -> Vec<DirectModelToolCall> {
+    let mut pending: Vec<PendingToolCall> = Vec::new();
+
+    for event in events {
+        if event.kind != "tool.started" {
+            continue;
+        }
+        let Some(tool_call) = event.tool_call.as_ref() else {
+            continue;
+        };
+        let stream_key = tool_stream_key(event, tool_call);
+        let Some(index) = pending.iter().position(|call| {
+            call.stream_key == stream_key || call.id == tool_call.id
+        }) else {
+            let mut call = PendingToolCall {
+                id: tool_call.id.clone(),
+                stream_key,
+                name: tool_call.name.clone(),
+                arguments_text: String::new(),
+                arguments_value: None,
+            };
+            merge_tool_call_arguments(&mut call, event, tool_call);
+            pending.push(call);
+            continue;
+        };
+        if pending[index].id != tool_call.id && !tool_call.id.trim().is_empty() {
+            pending[index].id = tool_call.id.clone();
+        }
+        if pending[index].name == "partial_tool_call" && tool_call.name != "partial_tool_call" {
+            pending[index].name = tool_call.name.clone();
+        }
+        merge_tool_call_arguments(&mut pending[index], event, tool_call);
+    }
+
+    pending
+        .into_iter()
+        .filter(|call| !call.name.trim().is_empty() && call.name != "partial_tool_call")
+        .map(|call| {
+            let arguments = if !call.arguments_text.trim().is_empty() {
+                serde_json::from_str::<Value>(&call.arguments_text)
+                    .unwrap_or_else(|_| json!({ "rawArguments": call.arguments_text }))
+            } else {
+                call.arguments_value.unwrap_or_else(|| json!({}))
+            };
+            DirectModelToolCall {
+                id: call.id,
+                name: call.name,
+                arguments,
+            }
+        })
+        .collect()
+}
+
+fn tool_stream_key(event: &DirectModelTurnEvent, tool_call: &DirectModelToolCall) -> String {
+    event
+        .metadata
+        .get("toolStreamKey")
+        .cloned()
+        .unwrap_or_else(|| tool_call.id.clone())
+}
+
+fn merge_tool_call_arguments(
+    pending: &mut PendingToolCall,
+    event: &DirectModelTurnEvent,
+    tool_call: &DirectModelToolCall,
+) {
+    if let Some(arguments_delta) = event
+        .metadata
+        .get("argumentsDelta")
+        .map(String::as_str)
+        .or_else(|| tool_call.arguments.get("argumentsDelta").and_then(Value::as_str))
+    {
+        pending.arguments_text.push_str(arguments_delta);
+        return;
+    }
+    pending.arguments_value = Some(tool_call.arguments.clone());
+}
+
+fn annotate_tool_result(result: &mut DirectModelToolResult, tool_call: &DirectModelToolCall) {
+    result
+        .metadata
+        .insert("toolCallName".to_string(), tool_call.name.clone());
+    if let Ok(arguments) = serde_json::to_string(&tool_call.arguments) {
+        result
+            .metadata
+            .insert("toolArguments".to_string(), arguments);
+    }
+}
+
+fn direct_tool_result_event(
+    input: &DirectModelTurnInput,
+    turn_id: &str,
+    result: &DirectModelToolResult,
+) -> DirectModelTurnEvent {
+    let mut metadata = result.metadata.clone();
+    metadata.insert("ok".to_string(), result.ok.to_string());
+    DirectModelTurnEvent {
+        kind: "tool.completed".to_string(),
+        source_event_id: format!(
+            "direct-model:{}:{}:tool.completed:{}",
+            input.thread_id, turn_id, result.tool_call_id
+        ),
+        provider: input.runner_id.clone(),
+        model: Some(input.model.clone()),
+        queue_item_id: Some(input.queue_item_id.clone()),
+        thread_id: Some(input.thread_id.clone()),
+        turn_id: Some(turn_id.to_string()),
+        role: Some("tool".to_string()),
+        body: Some(result.content.clone()),
+        tool_call: Some(DirectModelToolCall {
+            id: result.tool_call_id.clone(),
+            name: result.name.clone(),
+            arguments: result
+                .metadata
+                .get("toolArguments")
+                .and_then(|arguments| serde_json::from_str::<Value>(arguments).ok())
+                .unwrap_or_else(|| json!({})),
+        }),
+        approval_request_id: None,
+        metadata,
+    }
+}
+
+fn record_direct_failure(
+    app: AppHandle,
+    input: &DirectModelTurnInput,
+    turn_id: &str,
+    events: &mut Vec<DirectModelTurnEvent>,
+    error: String,
+) -> Result<(), String> {
+    let mut metadata = BTreeMap::new();
+    metadata.insert("error".to_string(), error.clone());
+    let failure_event = direct_runtime_event(
+        input,
+        turn_id,
+        "session.failed",
+        Some("system"),
+        Some(error.as_str()),
+        metadata,
+    );
+    events.push(failure_event.clone());
+    record_harness_events_from_direct_events(app, &[failure_event])?;
+    Ok(())
+}
+
+fn direct_runtime_event(
+    input: &DirectModelTurnInput,
+    turn_id: &str,
+    kind: &str,
+    role: Option<&str>,
+    body: Option<&str>,
+    metadata: BTreeMap<String, String>,
+) -> DirectModelTurnEvent {
+    DirectModelTurnEvent {
+        kind: kind.to_string(),
+        source_event_id: format!("direct-model:{}:{}:{}", input.thread_id, turn_id, kind),
+        provider: input.runner_id.clone(),
+        model: Some(input.model.clone()),
+        queue_item_id: Some(input.queue_item_id.clone()),
+        thread_id: Some(input.thread_id.clone()),
+        turn_id: Some(turn_id.to_string()),
+        role: role.map(str::to_string),
+        body: body.map(str::to_string),
+        tool_call: None,
+        approval_request_id: None,
+        metadata,
+    }
+}
+
+fn truncate_for_error(value: &str, max_chars: usize) -> String {
+    let mut output = String::new();
+    for (index, character) in value.chars().enumerate() {
+        if index >= max_chars {
+            output.push_str("...");
+            break;
+        }
+        output.push(character);
+    }
+    output
 }
 
 pub fn parse_provider_stream_chunk(
@@ -572,6 +1046,14 @@ pub fn request_tool_approval(
     app: AppHandle,
     input: DirectModelToolExecutionInput,
 ) -> Result<DirectModelToolApprovalResult, String> {
+    request_tool_approval_with_context(app, input, &[])
+}
+
+fn request_tool_approval_with_context(
+    app: AppHandle,
+    input: DirectModelToolExecutionInput,
+    prior_tool_results: &[DirectModelToolResult],
+) -> Result<DirectModelToolApprovalResult, String> {
     let (kind, risk) = approval_kind_and_risk(&input.tool_call.name).ok_or_else(|| {
         format!(
             "Direct model tool {} does not require approval.",
@@ -582,6 +1064,21 @@ pub fn request_tool_approval(
     let reason = argument_string(&input.tool_call.arguments, "reason")
         .unwrap_or_else(|| format!("Direct model requested {}.", input.tool_call.name));
     let command = format!("direct-model:{}", input.tool_call.name);
+    let mut metadata = BTreeMap::new();
+    metadata.insert("directToolCallId".to_string(), input.tool_call.id.clone());
+    metadata.insert("directToolName".to_string(), input.tool_call.name.clone());
+    if let Ok(arguments) = serde_json::to_string(&input.tool_call.arguments) {
+        metadata.insert("directToolArguments".to_string(), arguments);
+    }
+    metadata.insert("directExecutionPath".to_string(), input.execution_path.clone());
+    if let Some(policy) = input.approval_policy.as_ref() {
+        metadata.insert("directApprovalPolicy".to_string(), policy.clone());
+    }
+    if !prior_tool_results.is_empty() {
+        if let Ok(serialized) = serde_json::to_string(prior_tool_results) {
+            metadata.insert("directPriorToolResults".to_string(), serialized);
+        }
+    }
     let approval_request = crate::approval::request_approval(
         app.clone(),
         state,
@@ -599,6 +1096,7 @@ pub fn request_tool_approval(
             project_id: input.project_id.clone(),
             runner_id: input.runner_id.clone(),
             session_id: input.session_id.clone(),
+            metadata,
             requested_by: Some("direct-model-runtime".to_string()),
         },
     )?;
@@ -625,6 +1123,369 @@ pub fn request_tool_approval(
     })
 }
 
+pub fn execute_approved_tool(
+    app: AppHandle,
+    input: DirectModelApprovedToolExecutionInput,
+) -> Result<DirectModelApprovedToolExecutionResult, String> {
+    let state = app.state::<crate::approval::ApprovalState>();
+    let approval_request =
+        crate::approval::get_request(state, input.approval_request_id.as_str())?;
+    let tool_execution = match input.tool_execution {
+        Some(tool_execution) => tool_execution,
+        None => direct_tool_execution_from_approval(&approval_request)?,
+    };
+    validate_direct_tool_approval(&approval_request, &tool_execution)?;
+
+    let mut tool_execution_result = match tool_execution.tool_call.name.as_str() {
+        "apply_patch" => execute_approved_apply_patch(&tool_execution),
+        "run_command" => execute_approved_run_command(&tool_execution),
+        other => {
+            return Err(format!(
+                "Direct model tool {} is not an approved mutating tool.",
+                other
+            ))
+        }
+    };
+    annotate_tool_result(
+        &mut tool_execution_result.tool_result,
+        &tool_execution.tool_call,
+    );
+
+    let harness_event = direct_tool_execution_harness_event(
+        &tool_execution,
+        &approval_request,
+        &tool_execution_result,
+    );
+    let thread = if tool_execution.queue_item_id.is_some() {
+        Some(crate::harness::record_harness_event(
+            app,
+            harness_event.clone(),
+        )?)
+    } else {
+        None
+    };
+
+    Ok(DirectModelApprovedToolExecutionResult {
+        approval_request,
+        tool_execution_result,
+        harness_event: Some(harness_event),
+        thread,
+    })
+}
+
+pub fn prior_tool_results_from_approval(
+    approval_request: &crate::approval::ApprovalRequest,
+) -> Result<Vec<DirectModelToolResult>, String> {
+    let Some(serialized) = approval_request.metadata.get("directPriorToolResults") else {
+        return Ok(Vec::new());
+    };
+    serde_json::from_str::<Vec<DirectModelToolResult>>(serialized).map_err(|e| {
+        format!(
+            "Failed to parse prior direct tool results for approval {}: {}",
+            approval_request.id, e
+        )
+    })
+}
+
+fn direct_tool_execution_from_approval(
+    approval_request: &crate::approval::ApprovalRequest,
+) -> Result<DirectModelToolExecutionInput, String> {
+    let command = approval_request
+        .command
+        .as_deref()
+        .ok_or_else(|| "Approval request is missing a direct tool command.".to_string())?;
+    let tool_name = command
+        .strip_prefix("direct-model:")
+        .ok_or_else(|| format!("Approval request command is not a direct tool: {}", command))?;
+    let execution_path = approval_request
+        .path
+        .clone()
+        .or_else(|| approval_request.metadata.get("directExecutionPath").cloned())
+        .ok_or_else(|| "Approval request is missing direct tool execution path.".to_string())?;
+    let tool_call_id = approval_request
+        .metadata
+        .get("directToolCallId")
+        .cloned()
+        .unwrap_or_else(|| approval_request.id.clone());
+    let arguments = approval_request
+        .metadata
+        .get("directToolArguments")
+        .and_then(|arguments| serde_json::from_str::<Value>(arguments).ok())
+        .unwrap_or_else(|| json!({}));
+
+    Ok(DirectModelToolExecutionInput {
+        execution_path,
+        tool_call: DirectModelToolCall {
+            id: tool_call_id,
+            name: approval_request
+                .metadata
+                .get("directToolName")
+                .cloned()
+                .unwrap_or_else(|| tool_name.to_string()),
+            arguments,
+        },
+        approval_policy: approval_request
+            .metadata
+            .get("directApprovalPolicy")
+            .cloned(),
+        queue_item_id: approval_request.queue_item_id.clone(),
+        project_id: approval_request.project_id.clone(),
+        runner_id: approval_request.runner_id.clone(),
+        session_id: approval_request.session_id.clone(),
+    })
+}
+
+fn validate_direct_tool_approval(
+    approval_request: &crate::approval::ApprovalRequest,
+    input: &DirectModelToolExecutionInput,
+) -> Result<(), String> {
+    if approval_request.status != "approved" {
+        return Err(format!(
+            "Approval request {} is {}.",
+            approval_request.id, approval_request.status
+        ));
+    }
+    let expected_command = format!("direct-model:{}", input.tool_call.name);
+    if approval_request.command.as_deref() != Some(expected_command.as_str()) {
+        return Err(format!(
+            "Approval request {} does not approve {}.",
+            approval_request.id, expected_command
+        ));
+    }
+    if let Some(path) = approval_request.path.as_deref() {
+        let approved_path = PathBuf::from(path)
+            .canonicalize()
+            .map_err(|e| format!("Failed to resolve approved path: {}", e))?;
+        let execution_path = canonical_execution_root(&input.execution_path)?;
+        if approved_path != execution_path {
+            return Err(
+                "Approval path does not match the direct tool execution path.".to_string(),
+            );
+        }
+    }
+    if let Some(queue_item_id) = approval_request.queue_item_id.as_deref() {
+        if input.queue_item_id.as_deref() != Some(queue_item_id) {
+            return Err("Approval queue item does not match the direct tool input.".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn execute_approved_apply_patch(
+    input: &DirectModelToolExecutionInput,
+) -> DirectModelToolExecutionResult {
+    let root = match canonical_execution_root(&input.execution_path) {
+        Ok(root) => root,
+        Err(error) => return error_tool_result(input, error),
+    };
+    let patch = match argument_raw_string(&input.tool_call.arguments, "patch") {
+        Some(patch) => patch,
+        None => return error_tool_result(input, "apply_patch requires patch.".to_string()),
+    };
+    let result = run_direct_child(
+        &root,
+        "git",
+        &["apply", "--whitespace=nowarn"],
+        Some(patch.as_bytes()),
+        Duration::from_secs(30),
+    );
+    tool_result_from_child(input, "apply_patch", result)
+}
+
+fn execute_approved_run_command(
+    input: &DirectModelToolExecutionInput,
+) -> DirectModelToolExecutionResult {
+    let root = match canonical_execution_root(&input.execution_path) {
+        Ok(root) => root,
+        Err(error) => return error_tool_result(input, error),
+    };
+    let command = match argument_string(&input.tool_call.arguments, "command") {
+        Some(command) => command,
+        None => return error_tool_result(input, "run_command requires command.".to_string()),
+    };
+    let timeout_seconds = argument_usize(&input.tool_call.arguments, "timeoutSeconds")
+        .unwrap_or(60)
+        .clamp(1, 300);
+    let result = run_direct_child(
+        &root,
+        "/bin/sh",
+        &["-lc", command.as_str()],
+        None,
+        Duration::from_secs(timeout_seconds as u64),
+    );
+    tool_result_from_child(input, "run_command", result)
+}
+
+#[derive(Debug)]
+struct DirectChildOutput {
+    exit_code: Option<i32>,
+    stdout: String,
+    stderr: String,
+    timed_out: bool,
+}
+
+fn run_direct_child(
+    cwd: &Path,
+    command: &str,
+    args: &[&str],
+    stdin: Option<&[u8]>,
+    timeout: Duration,
+) -> Result<DirectChildOutput, String> {
+    let mut child = Command::new(command)
+        .args(args)
+        .current_dir(cwd)
+        .stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to spawn approved direct tool command: {}", e))?;
+
+    if let Some(stdin_bytes) = stdin {
+        let mut child_stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "Failed to open approved direct tool stdin.".to_string())?;
+        child_stdin
+            .write_all(stdin_bytes)
+            .map_err(|e| format!("Failed to write approved direct tool stdin: {}", e))?;
+        drop(child_stdin);
+    }
+
+    let started = std::time::Instant::now();
+    let mut timed_out = false;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if started.elapsed() >= timeout {
+                    timed_out = true;
+                    let _ = child.kill();
+                    break;
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(error) => {
+                let _ = child.kill();
+                return Err(format!("Failed to wait for approved direct tool command: {}", error));
+            }
+        }
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("Failed to collect approved direct tool output: {}", e))?;
+    Ok(DirectChildOutput {
+        exit_code: output.status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        timed_out,
+    })
+}
+
+fn tool_result_from_child(
+    input: &DirectModelToolExecutionInput,
+    tool_name: &str,
+    result: Result<DirectChildOutput, String>,
+) -> DirectModelToolExecutionResult {
+    match result {
+        Ok(output) => {
+            let mut metadata = BTreeMap::new();
+            metadata.insert(
+                "exitCode".to_string(),
+                output
+                    .exit_code
+                    .map(|code| code.to_string())
+                    .unwrap_or_else(|| "unknown".to_string()),
+            );
+            metadata.insert("timedOut".to_string(), output.timed_out.to_string());
+            metadata.insert("stdoutBytes".to_string(), output.stdout.len().to_string());
+            metadata.insert("stderrBytes".to_string(), output.stderr.len().to_string());
+            let content = format_direct_child_output(&output);
+            DirectModelToolExecutionResult {
+                tool_result: DirectModelToolResult {
+                    tool_call_id: input.tool_call.id.clone(),
+                    name: tool_name.to_string(),
+                    ok: output.exit_code == Some(0) && !output.timed_out,
+                    content,
+                    metadata,
+                },
+                approval_required: false,
+                approval_kind: None,
+                approval_reason: None,
+            }
+        }
+        Err(error) => error_tool_result(input, error),
+    }
+}
+
+fn format_direct_child_output(output: &DirectChildOutput) -> String {
+    let mut parts = Vec::new();
+    parts.push(format!(
+        "exitCode: {}",
+        output
+            .exit_code
+            .map(|code| code.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    ));
+    parts.push(format!("timedOut: {}", output.timed_out));
+    if !output.stdout.trim().is_empty() {
+        parts.push(format!("stdout:\n{}", truncate_for_error(&output.stdout, 12_000)));
+    }
+    if !output.stderr.trim().is_empty() {
+        parts.push(format!("stderr:\n{}", truncate_for_error(&output.stderr, 12_000)));
+    }
+    parts.join("\n")
+}
+
+fn direct_tool_execution_harness_event(
+    input: &DirectModelToolExecutionInput,
+    approval_request: &crate::approval::ApprovalRequest,
+    result: &DirectModelToolExecutionResult,
+) -> crate::harness::HarnessEventInput {
+    let mut metadata = result.tool_result.metadata.clone();
+    metadata.insert("approvalRequestId".to_string(), approval_request.id.clone());
+    metadata.insert("toolCallId".to_string(), input.tool_call.id.clone());
+    metadata.insert("toolName".to_string(), input.tool_call.name.clone());
+    metadata.insert("ok".to_string(), result.tool_result.ok.to_string());
+    if let Ok(arguments) = serde_json::to_string(&input.tool_call.arguments) {
+        metadata.insert("toolArguments".to_string(), arguments);
+    }
+
+    crate::harness::HarnessEventInput {
+        kind: "tool.completed".to_string(),
+        source_event_id: format!(
+            "direct-model:{}:tool.completed:{}",
+            approval_request.id, input.tool_call.id
+        ),
+        provider: input
+            .runner_id
+            .clone()
+            .unwrap_or_else(|| "direct-model".to_string()),
+        model: None,
+        queue_item_id: input.queue_item_id.clone(),
+        thread_id: input
+            .queue_item_id
+            .as_ref()
+            .map(|id| crate::agent_thread::thread_id_for_queue_item(id)),
+        run_id: None,
+        provider_session_id: input.session_id.clone(),
+        provider_thread_id: input
+            .queue_item_id
+            .as_ref()
+            .map(|id| crate::agent_thread::thread_id_for_queue_item(id)),
+        turn_id: input.session_id.clone(),
+        role: Some("tool".to_string()),
+        title: Some(format!("Approved tool completed: {}", input.tool_call.name)),
+        body: Some(result.tool_result.content.clone()),
+        created_at: Some(crate::atomic::utc_now_iso()),
+        metadata,
+    }
+}
+
 fn direct_tool_approval_harness_event(
     input: &DirectModelToolExecutionInput,
     approval_request: &crate::approval::ApprovalRequest,
@@ -633,7 +1494,13 @@ fn direct_tool_approval_harness_event(
     metadata.insert("approvalRequestId".to_string(), approval_request.id.clone());
     metadata.insert("toolCallId".to_string(), input.tool_call.id.clone());
     metadata.insert("toolName".to_string(), input.tool_call.name.clone());
-    metadata.insert("directProvider".to_string(), input.runner_id.clone().unwrap_or_else(|| "direct-model".to_string()));
+    metadata.insert(
+        "directProvider".to_string(),
+        input
+            .runner_id
+            .clone()
+            .unwrap_or_else(|| "direct-model".to_string()),
+    );
     if let Ok(arguments) = serde_json::to_string(&input.tool_call.arguments) {
         metadata.insert("toolArguments".to_string(), arguments);
     }
@@ -644,10 +1511,16 @@ fn direct_tool_approval_harness_event(
         provider: input.runner_id.clone().unwrap_or_else(|| "direct-model".to_string()),
         model: None,
         queue_item_id: input.queue_item_id.clone(),
-        thread_id: input.queue_item_id.as_ref().map(|id| format!("thread-{}", id)),
+        thread_id: input
+            .queue_item_id
+            .as_ref()
+            .map(|id| crate::agent_thread::thread_id_for_queue_item(id)),
         run_id: None,
         provider_session_id: input.session_id.clone(),
-        provider_thread_id: input.queue_item_id.as_ref().map(|id| format!("thread-{}", id)),
+        provider_thread_id: input
+            .queue_item_id
+            .as_ref()
+            .map(|id| crate::agent_thread::thread_id_for_queue_item(id)),
         turn_id: None,
         role: Some("approval".to_string()),
         title: Some(approval_request.title.clone()),
@@ -853,6 +1726,14 @@ fn argument_string(arguments: &Value, key: &str) -> Option<String> {
         .get(key)
         .and_then(Value::as_str)
         .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(String::from)
+}
+
+fn argument_raw_string(arguments: &Value, key: &str) -> Option<String> {
+    arguments
+        .get(key)
+        .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
         .map(String::from)
 }
@@ -1124,6 +2005,11 @@ fn parse_openai_chat_stream_chunk(
             }
             if let Some(tool_calls) = delta.get("tool_calls").and_then(Value::as_array) {
                 for (tool_index, tool_call) in tool_calls.iter().enumerate() {
+                    let provider_tool_index = tool_call
+                        .get("index")
+                        .and_then(Value::as_u64)
+                        .and_then(|value| usize::try_from(value).ok())
+                        .unwrap_or(tool_index);
                     let name = tool_call
                         .get("function")
                         .and_then(|function| function.get("name"))
@@ -1139,11 +2025,19 @@ fn parse_openai_chat_stream_chunk(
                         .and_then(Value::as_str)
                         .map(str::to_string)
                         .unwrap_or_else(|| {
-                            format!("{}-tool-{}-{}", source_prefix, choice_index, tool_index)
+                            format!(
+                                "{}-tool-{}-{}",
+                                source_prefix, choice_index, provider_tool_index
+                            )
                         });
                     let mut metadata = BTreeMap::new();
                     metadata.insert("argumentsDelta".to_string(), arguments_delta.to_string());
                     metadata.insert("choiceIndex".to_string(), choice_index.to_string());
+                    metadata.insert("toolIndex".to_string(), provider_tool_index.to_string());
+                    metadata.insert(
+                        "toolStreamKey".to_string(),
+                        format!("{}:{}:{}", source_prefix, choice_index, provider_tool_index),
+                    );
                     let event_index = events.len();
                     events.push(stream_event(
                         input,
@@ -1192,8 +2086,62 @@ fn parse_openai_chat_stream_chunk(
 fn parse_gemini_generate_content_stream_chunk(
     input: &DirectModelProviderStreamParseInput,
 ) -> Result<DirectModelProviderStreamParseResult, String> {
+    let payloads = openai_sse_payloads(&input.raw_chunk);
+    let trimmed = input.raw_chunk.trim();
+    if payloads.len() > 1 || payloads.first().is_some_and(|payload| payload != trimmed) {
+        let mut events = Vec::new();
+        let mut done = false;
+        let mut usage = BTreeMap::new();
+        for (payload_index, payload) in payloads.into_iter().enumerate() {
+            if payload == "[DONE]" {
+                done = true;
+                continue;
+            }
+            let value = serde_json::from_str::<Value>(&payload)
+                .map_err(|e| format!("Failed to parse Gemini stream payload: {}", e))?;
+            let parsed = parse_gemini_stream_value(input, &value, payload_index)?;
+            done = done || parsed.done;
+            usage.extend(parsed.usage);
+            events.extend(parsed.events);
+        }
+        return Ok(DirectModelProviderStreamParseResult { events, done, usage });
+    }
+
     let value = serde_json::from_str::<Value>(input.raw_chunk.trim())
         .map_err(|e| format!("Failed to parse Gemini stream chunk: {}", e))?;
+    parse_gemini_stream_value(input, &value, 0)
+}
+
+fn parse_gemini_stream_value(
+    input: &DirectModelProviderStreamParseInput,
+    value: &Value,
+    stream_index: usize,
+) -> Result<DirectModelProviderStreamParseResult, String> {
+    if let Some(items) = value.as_array() {
+        let mut events = Vec::new();
+        let mut done = false;
+        let mut usage = BTreeMap::new();
+        for (item_index, item) in items.iter().enumerate() {
+            let parsed = parse_gemini_generate_content_value(
+                input,
+                item,
+                &format!("{}-{}", stream_index, item_index),
+            )?;
+            done = done || parsed.done;
+            usage.extend(parsed.usage);
+            events.extend(parsed.events);
+        }
+        return Ok(DirectModelProviderStreamParseResult { events, done, usage });
+    }
+
+    parse_gemini_generate_content_value(input, value, &stream_index.to_string())
+}
+
+fn parse_gemini_generate_content_value(
+    input: &DirectModelProviderStreamParseInput,
+    value: &Value,
+    stream_index: &str,
+) -> Result<DirectModelProviderStreamParseResult, String> {
     let mut events = Vec::new();
     let mut done = false;
     let mut usage = BTreeMap::new();
@@ -1209,8 +2157,9 @@ fn parse_gemini_generate_content_stream_chunk(
         .enumerate()
     {
         let source_prefix = format!(
-            "gemini:{}:{}",
+            "gemini:{}:{}:{}",
             input.turn_id.as_deref().unwrap_or("turn"),
+            stream_index,
             candidate_index
         );
         let parts = candidate
@@ -1389,6 +2338,30 @@ fn build_openai_chat_request(
             "content": message.content.as_str(),
         }));
     }
+    if !input.tool_results.is_empty() {
+        let tool_calls: Vec<Value> = input
+            .tool_results
+            .iter()
+            .map(|result| {
+                json!({
+                    "id": result.tool_call_id.as_str(),
+                    "type": "function",
+                    "function": {
+                        "name": result.name.as_str(),
+                        "arguments": result.metadata
+                            .get("toolArguments")
+                            .cloned()
+                            .unwrap_or_else(|| "{}".to_string()),
+                    },
+                })
+            })
+            .collect();
+        messages.push(json!({
+            "role": "assistant",
+            "content": Value::Null,
+            "tool_calls": tool_calls,
+        }));
+    }
     for result in &input.tool_results {
         messages.push(json!({
             "role": "tool",
@@ -1411,7 +2384,18 @@ fn build_openai_chat_request(
             })
         })
         .collect();
-    let tool_choice = if tools.is_empty() { "none" } else { "auto" };
+    let mut body = json!({
+        "model": input.model.as_str(),
+        "messages": messages,
+        "stream": true,
+        "stream_options": { "include_usage": true },
+    });
+    if !tools.is_empty() {
+        if let Some(object) = body.as_object_mut() {
+            object.insert("tools".to_string(), Value::Array(tools));
+            object.insert("tool_choice".to_string(), Value::String("auto".to_string()));
+        }
+    }
 
     let mut headers = BTreeMap::new();
     headers.insert("Content-Type".to_string(), "application/json".to_string());
@@ -1428,14 +2412,7 @@ fn build_openai_chat_request(
         endpoint: "https://api.deepseek.com/chat/completions".to_string(),
         api_key_env: provider.api_key_env.clone(),
         headers,
-        body: json!({
-            "model": input.model.as_str(),
-            "messages": messages,
-            "tools": tools,
-            "tool_choice": tool_choice,
-            "stream": true,
-            "stream_options": { "include_usage": true },
-        }),
+        body,
     })
 }
 
@@ -1450,12 +2427,37 @@ fn build_gemini_generate_content_request(
         }
         contents.push(gemini_content_from_message(message)?);
     }
+    if !input.tool_results.is_empty() {
+        let function_calls = input
+            .tool_results
+            .iter()
+            .map(|result| {
+                let args = result
+                    .metadata
+                    .get("toolArguments")
+                    .and_then(|arguments| serde_json::from_str::<Value>(arguments).ok())
+                    .unwrap_or_else(|| json!({}));
+                json!({
+                    "functionCall": {
+                        "name": result.name.as_str(),
+                        "id": result.tool_call_id.as_str(),
+                        "args": args,
+                    },
+                })
+            })
+            .collect::<Vec<_>>();
+        contents.push(json!({
+            "role": "model",
+            "parts": function_calls,
+        }));
+    }
     for result in &input.tool_results {
         contents.push(json!({
             "role": "user",
             "parts": [{
                 "functionResponse": {
                     "name": result.name.as_str(),
+                    "id": result.tool_call_id.as_str(),
                     "response": {
                         "ok": result.ok,
                         "content": result.content.as_str(),
@@ -1477,12 +2479,6 @@ fn build_gemini_generate_content_request(
             })
         })
         .collect();
-    let function_calling_mode = if function_declarations.is_empty() {
-        "NONE"
-    } else {
-        "AUTO"
-    };
-
     let mut headers = BTreeMap::new();
     headers.insert("Content-Type".to_string(), "application/json".to_string());
     headers.insert(
@@ -1494,6 +2490,28 @@ fn build_gemini_generate_content_request(
         "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent",
         input.model
     );
+    let mut body = json!({
+        "systemInstruction": {
+            "parts": [{ "text": input.system_prompt.as_str() }],
+        },
+        "contents": contents,
+    });
+    if !function_declarations.is_empty() {
+        if let Some(object) = body.as_object_mut() {
+            object.insert(
+                "tools".to_string(),
+                json!([{ "functionDeclarations": function_declarations }]),
+            );
+            object.insert(
+                "toolConfig".to_string(),
+                json!({
+                    "functionCallingConfig": {
+                        "mode": "AUTO",
+                    },
+                }),
+            );
+        }
+    }
 
     Ok(DirectModelProviderRequest {
         runner_id: provider.runner_id.clone(),
@@ -1503,20 +2521,7 @@ fn build_gemini_generate_content_request(
         endpoint,
         api_key_env: provider.api_key_env.clone(),
         headers,
-        body: json!({
-            "systemInstruction": {
-                "parts": [{ "text": input.system_prompt.as_str() }],
-            },
-            "contents": contents,
-            "tools": [{
-                "functionDeclarations": function_declarations,
-            }],
-            "toolConfig": {
-                "functionCallingConfig": {
-                    "mode": function_calling_mode,
-                },
-            },
-        }),
+        body,
     })
 }
 
@@ -1574,6 +2579,22 @@ pub fn record_direct_model_harness_events(
     events: Vec<DirectModelTurnEvent>,
 ) -> Result<DirectModelHarnessRecordResult, String> {
     record_harness_events_from_direct_events(app, &events)
+}
+
+#[tauri::command]
+pub async fn execute_direct_model_turn(
+    app: AppHandle,
+    input: DirectModelTurnInput,
+) -> Result<DirectModelTurnExecutionResult, String> {
+    execute_provider_turn(app, input).await
+}
+
+#[tauri::command]
+pub async fn execute_direct_model_tool_loop(
+    app: AppHandle,
+    input: DirectModelToolLoopInput,
+) -> Result<DirectModelToolLoopResult, String> {
+    execute_provider_tool_loop(app, input).await
 }
 
 #[tauri::command]

@@ -9,6 +9,7 @@ Tracks permission and capability boundaries.
 The desktop app needs local access to:
 
 - `~/.brain-loop`
+- `~/.brain-loop/project-brains`
 - registered project paths
 - runner executables such as `opencode`, `agy`, and Codex
 - local logs and LaunchAgent configuration when enabled
@@ -18,7 +19,9 @@ The desktop app needs local access to:
 - Read global Brain settings, projects, queues, locks, and logs.
 - Write Brain state files through atomic mutation helpers only.
 - Launch runner processes from queue item `executionPath`.
+- Launch one explicit queue item from a row-level manual Start action without starting the global automation loop.
 - Create per-task Git worktrees under the configured `settings.worktreeStorageRoot` for registered project paths.
+- During explicit project creation, inspect the selected project folder, create external project Brain folders under `~/.brain-loop/project-brains/<project-id>/brain/` when the project has no local `brain/`, and upsert managed Brain Loop instruction blocks into the selected project's `AGENTS.md` or `AGENT.md` and `CLAUDE.md`.
 - Launch agents from the registered project checkout when `settings.executionStrategy` is explicitly `main-checkout`, or when `auto` fallback is selected and isolated worktree preparation fails.
 - Stream runner stdout/stderr into UI events and durable logs.
 - Create and manage PTY sessions for thread terminals.
@@ -31,26 +34,31 @@ The desktop app needs local access to:
 
 ## Approval Broker Surface
 
-- Approval requests are created through explicit Tauri commands and shown in the desktop Approvals tab.
+- Approval requests are created through explicit Tauri commands and shown in the desktop Approval view/sidebar count.
 - Requests carry action kind, risk, command, path, queue item, runner, and session context when available.
 - Requests are durably stored in `~/.brain-loop/approvals.json` using atomic JSON writes so pending approvals survive app restarts.
 - Approving a request records an approval event; it does not silently execute additional work by itself.
 - Exception: merge approval requests with command `brain-loop:land-approved-work` execute the explicitly approved landing action for the linked queue item after the approval is recorded.
+- Exception: direct-provider approval requests with command `direct-model:apply_patch` or `direct-model:run_command` can be executed only by the explicit `execute_approved_direct_model_tool` command after Brain Loop verifies the request is approved and path/queue context matches the original tool input. When the request belongs to a started direct-provider implementation item, that explicit command may resume the provider loop with the approved tool result.
 - Denying or expiring a request emits a resolution event and attempts to block the linked queue item with an audit history entry.
 
 ## Safety Rules
 
 - Do not silently approve sensitive runner actions.
 - Do not launch work for disabled projects.
+- Do not let row-level manual Start bypass disabled project, disabled runner, dependency, capacity, MaxLoop, approval, landing, or terminal-state guards.
+- Do not create a project Brain inside a selected project that does not already have `brain/`; use the external `~/.brain-loop/project-brains/<project-id>/brain/` path instead.
+- Do not overwrite user-authored agent instruction content; only replace the managed `brain-loop` block.
 - Do not ignore queue item `worktreePath` when it is present.
 - Do not silently fall back to the main project checkout when per-task worktree preparation fails under the `worktree` strategy; persist the failure on the queue item.
 - Warn clearly in the UI when `main-checkout` execution is selected because agents can collide with local user edits.
 - Do not mutate queue items into unsupported statuses.
 - Do not mark review-passed work `approved` until landing succeeds or landing is explicitly not needed because implementation already ran in the registered checkout.
-- Do not auto-land work for projects with `autoMergeOnReviewPass` disabled; create a merge approval request instead.
+- Do not auto-land work for projects with `autoMergeOnReviewPass` disabled; treat them as manual approval projects and create a merge approval request instead.
 - Do not land work for disabled projects.
 - Do not silently approve merge conflicts, missing worktrees, unrelated repositories, or missing target branches; block the queue item with landing error metadata.
 - Do not use approval cards to bypass sandbox, filesystem, or OS permission prompts.
+- Do not execute approved direct-provider patch or command tools outside the canonical execution path recorded on the approval request.
 - Do not send OS/WebView notifications when the user has disabled the matching category.
 - Do not play permission-required sounds when the user has disabled approval notifications or muted permission sounds.
 - Do not delete per-task worktrees or logs as part of agent thread archival.

@@ -34,6 +34,10 @@ pub fn queues_dir() -> PathBuf {
     brain_project_manager_root().join("queues").join("handoffs")
 }
 
+pub fn orchestrations_dir() -> PathBuf {
+    brain_project_manager_root().join("orchestrations")
+}
+
 pub fn locks_dir() -> PathBuf {
     brain_project_manager_root().join("locks")
 }
@@ -92,6 +96,7 @@ pub fn ensure_state_root() -> std::io::Result<()> {
     copy_dir_if_missing(&legacy_root.join("threads"), &root.join("threads"))?;
 
     ensure_dir(&queues_dir())?;
+    ensure_dir(&orchestrations_dir())?;
     ensure_dir(&root.join("queues").join("archive"))?;
     ensure_dir(&locks_dir())?;
     ensure_dir(&logs_dir())?;

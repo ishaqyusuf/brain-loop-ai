@@ -12,6 +12,8 @@ The state model is part of the product's opinionated open-source stance: users a
 - `~/.brain-loop/projects.json`
 - `~/.brain-loop/approvals.json`
 - `~/.brain-loop/workspaces.json`
+- `~/.brain-loop/project-brains/<project-id>/brain/`
+- `~/.brain-loop/orchestrations/*.json`
 - `~/.brain-loop/queues/handoffs/*.json`
 - `~/.brain-loop/threads/*.json`
 - `~/.brain-loop/locks/`
@@ -29,6 +31,7 @@ The state model is part of the product's opinionated open-source stance: users a
   - `list_recent_logs`: lists recent runner log summaries.
 - `packages/desktop-client` wraps these Tauri invoke interfaces in typed TypeScript functions.
 - Queue read errors include file name, path, and parse/read message so React can surface malformed queue files.
+- `list_projects` returns optional project Brain metadata: persisted `brainPath`/`brainStorage` and read-only `brainPathExists` derived from the current filesystem.
 
 ## Implemented Behavior (Mutations)
 
@@ -36,6 +39,8 @@ The state model is part of the product's opinionated open-source stance: users a
 - `src/atomic.rs`: Atomic JSON/TOML write helpers — write to a temp file in the target directory, flush, then rename. Generates UTC ISO 8601 timestamps.
 - `src/lock.rs`: Lock management — acquire (creates lock file atomically, fails if already held), release (removes file), is_locked (file existence check).
 - `src/approval.rs`: Durable approval broker state — loads and atomically writes `approvals.json` for approval request lifecycle events.
+- `src/project_setup.rs`: Project onboarding helper — inspects selected project folders, derives project defaults, prepares external project Brain folders when no local `brain/` exists, and upserts managed Brain Loop instruction blocks into agent instruction files.
+- `src/orchestration.rs`: Orchestration chat state — lists, creates, and appends messages to parent intake/planning chats under `orchestrations/`.
 - `src/brain.rs`: Core mutation logic —
   - `QueueItem`/`QueueHistoryEntry` Rust structs with serde camelCase field mapping.
   - `update_queue_item_status`: Validates current and new statuses, checks transition is allowed, updates status-specific timestamps, appends a history entry.
@@ -45,6 +50,8 @@ The state model is part of the product's opinionated open-source stance: users a
   - `acquire_brain_lock`: Creates a lock file with typed metadata.
   - `release_brain_lock`: Removes a lock file.
   - `check_brain_lock`: Returns whether a lock file exists.
+  - `inspect_project_folder`: Resolves a selected folder and returns auto-fill defaults plus Brain setup metadata.
+  - `list_orchestrations`, `create_orchestration`, `append_orchestration_message`, and `handoff_orchestration`: manage orchestration parent chats and create linked queue handoffs.
 - `packages/desktop-client` wraps all mutation commands in typed async functions.
 - `packages/brain-core` exports `LockResult` for lock operation responses.
 

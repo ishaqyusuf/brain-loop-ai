@@ -6,13 +6,238 @@ Tracks durable implementation progress and planning changes.
 
 ## Updates
 
+### Per-Task Manual Start Button (2026-06-22)
+
+- Added `run_queue_item_once(queueItemId)` so a single task row can start implementation or review without starting the global automation loop.
+- The command launches only the requested item, preserves enabled-project, enabled-runner, dependency, capacity, MaxLoop, worktree, direct-provider, process-runner, and logging gates, and refuses active/landing/blocked/stale/approved statuses.
+- Added desktop-client and React data-hook support for per-task start results and busy state.
+- Added compact row-level Start buttons with tooltips to Dashboard queue rows and the full queue table.
+- Updated scheduler QA source assertions for the current componentized desktop architecture.
+- Manual Computer Use smoke test was partially blocked: the Tauri dev app launched successfully, but Computer Use could not target the dev process by product name, bundle id, or executable path, so no row click was performed.
+- Checks passed: `bun --filter @brain-loop/desktop typecheck`; `bun --filter @brain-loop/desktop rust:check`; `bun --filter @brain-loop/desktop visual:qa`; `bun --filter @brain-loop/desktop scheduler:qa`.
+- Changed files:
+  - `apps/desktop/src-tauri/src/lib.rs`
+  - `packages/desktop-client/src/index.ts`
+  - `apps/desktop/src/hooks/use-brain-loop-data.ts`
+  - `apps/desktop/src/components/workspace/workspace-shell.tsx`
+  - `apps/desktop/src/components/dashboard/dashboard-view.tsx`
+  - `apps/desktop/src/components/tables/queue/queue-table.tsx`
+  - `apps/desktop/src/app.tsx`
+  - `apps/desktop/scripts/scheduler-contract-qa.mjs`
+  - `brain/features/automation-runs.md`
+  - `brain/features/queue-dashboard.md`
+  - `brain/api/endpoints.md`
+  - `brain/api/contracts.md`
+  - `brain/api/permissions.md`
+  - `brain/progress.md`
+
+### Workers List Queued Task Filter (2026-06-18)
+
+- Updated the Workers sidebar list so queue-backed tasks appear only after they move past plain `queued` into `picked` or later states.
+- Queued-only handoffs remain visible through Dashboard/queue surfaces until automation or a runner claims them.
+- Updated Codex visual QA source invariants and Brain UI/orchestration docs to preserve the distinction between queued work and active worker rows.
+- Changed files:
+  - `apps/desktop/src/app.tsx`
+  - `apps/desktop/scripts/codex-visual-qa.mjs`
+  - `brain/features/ui-shell.md`
+  - `brain/features/orchestration.md`
+  - `brain/progress.md`
+
+### Dashboard Navigation And Manual Approval UX (2026-06-17)
+
+- Moved sidebar play/pause automation into the compact footer status slot as an icon-only tooltip control beside scheduler utilization percentage.
+- Added fixed sidebar actions before Review/Implementation/Approval: Dashboard and New Orchestrator.
+- Added a Dashboard workspace with system status metrics, implementation/review capacity, approval counts, task search, project filter, week/month review windows, review queue, orchestration counts, and project approval mode overview.
+- Changed the Approval sidebar count to represent pending approval requests only, so manual review-passed approvals do not get mixed with blocked item counts.
+- Updated project table language from merge policy to manual/automatic approval mode and added an explicit Approval Mode selector in the project edit sheet while preserving the existing `autoMergeOnReviewPass` backend contract.
+- Removed sample approval request controls from the Approval panel so the Approval surface only lists real requests from automation, manual project approval, or direct-model tool gates.
+- Updated visual QA source invariants and Brain docs for the new navigation/dashboard surface.
+- Expanded `scheduler:qa` with source-level assertions for the requested fixed sidebar order, footer icon-only play/pause control, grouped Codex/Claude orchestrator selector, Dashboard bird-view filters/analytics, manual/automatic approval visibility, and absence of sample approval controls.
+- Exported the existing `OrchestrationRunInput` type from `@brain-loop/brain-core` so the desktop client typecheck passes for live orchestration turns.
+- Changed files:
+  - `apps/desktop/src/app.tsx`
+  - `apps/desktop/src/components/sidebar.tsx`
+  - `apps/desktop/src/components/approval-panel.tsx`
+  - `apps/desktop/src/components/tables/projects/project-table.tsx`
+  - `apps/desktop/scripts/codex-visual-qa.mjs`
+  - `apps/desktop/scripts/scheduler-contract-qa.mjs`
+  - `packages/brain-core/src/index.ts`
+  - `brain/features/ui-shell.md`
+  - `brain/features/project-configuration.md`
+  - `brain/api/permissions.md`
+  - `brain/api/contracts.md`
+  - `brain/progress.md`
+
+### Caveat Closure: Live Orchestration, Direct Review, Rust Check (2026-06-17)
+
+- Added live orchestration turns for selected Codex/Claude orchestrators. Codex runs through local `codex exec` in read-only sandbox mode; Claude runs through local `claude --print` in plan mode with tools disabled.
+- Replaced static Orchestrator assistant guidance in the UI flow with the live `run_orchestration_turn` command.
+- Enabled direct DeepSeek/Gemini as review defaults in settings validation and Settings UI.
+- Added direct-provider review dispatch using read-only direct tools (`read_file`, `search_text`, `finish_task`) and review-owned outcomes: `reviewed-fix-request`, `landing`, and `blocked`.
+- Added `bun --filter @brain-loop/desktop rust:check`, which finds Cargo on PATH or at `~/.cargo/bin/cargo`, then runs `cargo check` for the Tauri crate.
+- `bun --filter @brain-loop/desktop scheduler:qa` now covers live orchestration, direct-provider review dispatch, and the Cargo-discovering Rust check script.
+- Verification passed: `bun --filter @brain-loop/desktop scheduler:qa`, `bun --filter @brain-loop/desktop rust:check`, and scoped `git diff --check`.
+- Changed files:
+  - `apps/desktop/src-tauri/src/lib.rs`
+  - `apps/desktop/src-tauri/src/orchestration.rs`
+  - `apps/desktop/src-tauri/src/direct_model.rs`
+  - `apps/desktop/src-tauri/src/runner.rs`
+  - `apps/desktop/src/app.tsx`
+  - `apps/desktop/src/components/settings/settings-page.tsx`
+  - `apps/desktop/scripts/rust-check.mjs`
+  - `apps/desktop/scripts/scheduler-contract-qa.mjs`
+  - `apps/desktop/package.json`
+  - `packages/brain-core/src/types.ts`
+  - `packages/desktop-client/src/index.ts`
+  - `brain/api/contracts.md`
+  - `brain/api/endpoints.md`
+  - `brain/decisions/2026-06-15-direct-model-provider-runners.md`
+  - `brain/features/automation-runs.md`
+  - `brain/features/orchestration.md`
+  - `brain/plans/2026-06-12-feature-runner-model-catalog-settings.md`
+  - `brain/system/architecture.md`
+  - `brain/progress.md`
+
+### App-Owned Automation Runtime Alignment (2026-06-17)
+
+- Confirmed `hermes cron list` reports no scheduled jobs and deleted the paused Codex heartbeat named `brain-loop`, which still contained old Hermes-observability instructions.
+- Updated fresh settings defaults so `implementationDispatcher` no longer defaults to a running/missing external job; it now uses `brain-loop-app-scheduler`, `not-used` gateway status, `implementation-and-review`, and a note that Brain Loop's app-owned scheduler is the automation runtime.
+- Replaced stale `hermes-agent` fixture authors with `brain-loop` in shared queue contract examples.
+- Aligned the default and live app-owned capacity cadence to one minute (`capacityPollIntervalSeconds = 60`).
+- Review runner completion now immediately asks the review pool to fill again while automation is running, so waiting submitted items can start when a review slot frees instead of waiting for the next cadence tick.
+- Runner-completion follow-ups are now pause-aware: in-flight implementation/review processes finish naturally after pause, but follow-up review or fix dispatch only starts while automation is still running.
+- Review-requested fixes now loop back into implementation dispatch from the same queue-linked worker thread while automation is running; the worker thread becomes done only after the queue item reaches approval.
+- Documented that `start_automation` owns queue checks, worker dispatch, review dispatch, and runner-completion callbacks without requiring Hermes cron or Hermes gateway.
+- Changed files:
+  - `apps/desktop/src-tauri/src/lib.rs`
+  - `apps/desktop/src-tauri/src/runner.rs`
+  - `apps/desktop/scripts/scheduler-contract-qa.mjs`
+  - `apps/desktop/src-tauri/src/scheduler.rs`
+  - `brain/features/automation-runs.md`
+  - `packages/brain-core/src/examples.ts`
+  - `packages/brain-core/src/constants.ts`
+  - `brain/api/contracts.md`
+  - `brain/api/endpoints.md`
+  - `brain/features/background-scheduler.md`
+  - `brain/progress.md`
+
+### Orchestrator Model Selector Slice (2026-06-17)
+
+- Added a grouped Orchestrator start-surface model selector with Codex and Claude sections.
+- New orchestration drafts now persist the selected orchestrator origin (`codex` or `claude`) and selected model on the orchestration record.
+- Initial orchestration intake messages now carry the selected orchestration model metadata instead of always using the global review model fallback.
+- At this point the selector was metadata/handoff-context plumbing; live Codex/Claude orchestration was added later in the 2026-06-17 caveat closure slice.
+- Changed files:
+  - `apps/desktop/src/app.tsx`
+  - `brain/features/orchestration.md`
+  - `brain/progress.md`
+
+### Direct Provider Implementation Dispatch (2026-06-16)
+
+- Wired `direct-deepseek` and `direct-gemini` into implementation dispatch.
+- Direct implementation items now use the same `picked`/`started` queue reservation path as CLI runners, then launch a Brain Loop-owned background tool loop instead of `runner::run_process`.
+- Direct prompts now avoid CLI-only global skill-file instructions and embed queue context plus active handoff content because direct tools are scoped to the execution path.
+- Direct completion now reconciles queue state: `finish_task` submits by default, `queueStatus: "blocked"` blocks, approval-required tools leave the item `started` with `waitingReason`, and provider/max-iteration failures block the item.
+- Approval-waiting direct items are exempt from stale process-sidecar reconciliation. Running an approved direct tool now clears the waiting reason and resumes the provider loop with an explicit continuation prompt plus the approved tool result, while submitted direct items give review dispatch a chance to run when automation is running.
+- Gemini continuation requests now include a model `functionCall` bridge before `functionResponse` parts, matching the DeepSeek/OpenAI assistant tool-call bridge.
+- Direct approval requests now persist direct tool-call metadata, and the Approvals panel calls `execute_approved_direct_model_tool` after approving direct-model patch/command requests so paused direct implementation runs can continue.
+- Direct approval resumes now include preserved prior safe-tool results plus the approved tool result, so provider context survives a patch/command approval pause.
+- Implementation dispatch now honors runner catalog enabled state. Disabled or missing runners are skipped with `waitingReason` and `runner_disabled_waiting`, so disabled-by-default direct DeepSeek/Gemini entries do not launch until explicitly enabled.
+- Direct provider request builders now omit optional DeepSeek/Gemini tool declaration fields when no tools are supplied, keeping preview/manual turn envelopes provider-friendly.
+- DeepSeek/OpenAI-style streamed tool-call assembly now preserves a stable stream key, preferring the provider tool-call index when present, so later argument deltas without a repeated provider tool id merge into the original tool call.
+- Gemini stream parsing now includes payload/array sequence in generated source event ids so harness dedupe does not collapse later chunks from the same candidate.
+- Direct provider turns now persist `turn.started` before API-key lookup/provider HTTP initialization/send work and append `session.failed` separately on missing/empty API keys, provider setup, request, response-read, HTTP-status, or parse failures.
+- Gemini continuation request history now includes the original provider tool-call id on synthetic `functionCall` and matching `functionResponse` parts so tool results can be correlated by Gemini 3 models.
+- Shared Brain Core exports now include `RunnerKind` and `ProviderApiStyle` so direct-provider catalog metadata can be typed through the package entrypoint.
+- At this point the direct `finish_task` tool schema advertised only implementation statuses; review statuses were added later in the 2026-06-17 caveat closure slice.
+- Direct implementation turns and approval events now use the shared queue-thread id helper so provider messages attach to the same durable thread record as queue metadata.
+- At this point settings normalization, validation, and the Agents UI kept direct-provider runners out of the default review runner slot because review dispatch was still CLI-only.
+- At this point Settings > Agents allowed enabled direct-provider runners as implementation defaults while visibly disabling them in the review runner selector.
+- Direct provider tool loops now carry cumulative safe-tool results across provider turns, so earlier `read_file` and `search_text` outputs stay visible after later tool calls.
+- At this point direct review dispatch was still pending.
+
+### Direct Model Approved Mutating Tool Execution Slice (2026-06-16)
+
+- Added shared `DirectModelApprovedToolExecutionInput` and `DirectModelApprovedToolExecutionResult` plus desktop-client `executeApprovedDirectModelTool`.
+- Added approval lookup helper for direct runtime approval verification.
+- Added Tauri command `execute_approved_direct_model_tool`.
+- The command verifies the approval exists, is approved, matches `direct-model:<tool>`, and matches the canonical execution path and queue context before running.
+- Approved `apply_patch` runs `git apply --whitespace=nowarn` in the canonical execution path with patch content piped to stdin.
+- Approved `run_command` runs `/bin/sh -lc` in the canonical execution path with a 1-300 second timeout.
+- Both approved paths capture stdout/stderr/exit metadata, return a direct tool result, and record queue-linked `tool.completed` harness events when queue context is present.
+- Queue transitions remained owned by the implementation dispatch wrapper; direct review dispatch was still pending at that point.
+- Changed files include:
+  - `packages/brain-core/src/types.ts`
+  - `packages/brain-core/src/index.ts`
+  - `packages/desktop-client/src/index.ts`
+  - `apps/desktop/src-tauri/src/approval.rs`
+  - `apps/desktop/src-tauri/src/direct_model.rs`
+  - `apps/desktop/src-tauri/src/lib.rs`
+  - `brain/api/contracts.md`
+  - `brain/api/endpoints.md`
+  - `brain/api/permissions.md`
+  - `brain/features/automation-runs.md`
+  - `brain/system/architecture.md`
+  - `brain/decisions/2026-06-15-direct-model-provider-runners.md`
+  - `brain/plans/2026-06-12-feature-runner-model-catalog-settings.md`
+  - `brain/progress.md`
+- Verification kept lightweight per fast Bun monorepo command discipline; project-wide typecheck/build not run in this slice.
+
+### Direct Model Safe Tool Loop Slice (2026-06-16)
+
+- Added shared `DirectModelToolLoopInput` and `DirectModelToolLoopResult` plus desktop-client `executeDirectModelToolLoop`.
+- Added Tauri command `execute_direct_model_tool_loop` for bounded direct DeepSeek/Gemini safe-tool loops.
+- The loop executes provider turns, collects model-requested tool calls, executes safe tools (`read_file`, `search_text`, `finish_task`), records `tool.completed` harness events, and feeds cumulative tool results into the next provider turn.
+- DeepSeek/OpenAI-style tool result feedback now includes an assistant `tool_calls` bridge message before `tool` messages so the second provider turn has the required context.
+- The loop stops at `apply_patch` or `run_command` by creating a Brain Loop approval request and returning `stoppedReason: approval_required`; approved mutating execution remains future work.
+- Loop execution is capped between 1 and 8 iterations and does not transition queues.
+- Changed files include:
+  - `packages/brain-core/src/types.ts`
+  - `packages/brain-core/src/index.ts`
+  - `packages/desktop-client/src/index.ts`
+  - `apps/desktop/src-tauri/src/direct_model.rs`
+  - `apps/desktop/src-tauri/src/lib.rs`
+  - `brain/api/contracts.md`
+  - `brain/api/endpoints.md`
+  - `brain/features/automation-runs.md`
+  - `brain/system/architecture.md`
+  - `brain/decisions/2026-06-15-direct-model-provider-runners.md`
+  - `brain/plans/2026-06-12-feature-runner-model-catalog-settings.md`
+  - `brain/progress.md`
+- Verification kept lightweight per fast Bun monorepo command discipline; project-wide typecheck/build not run in this slice.
+
+### Direct Model Manual Provider Turn Execution Slice (2026-06-16)
+
+- Added shared `DirectModelTurnExecutionResult` and desktop-client `executeDirectModelTurn`.
+- Added Tauri command `execute_direct_model_turn` for one manual direct-provider turn against DeepSeek or Gemini.
+- The command builds the redacted provider request, reads `DEEPSEEK_API_KEY` or `GEMINI_API_KEY`, sends the provider HTTP request, parses the full response into normalized direct events, and records those events through the existing harness JSONL/thread ingestion path.
+- API-key/setup/request/send/response-read/status/parse failures record a queue-linked `session.failed` harness event before returning an error.
+- Gated direct tool approval requests continue to record queue-linked `approval.required` harness events when queue context is present.
+- Gemini parsing now accepts full streamed response arrays as well as single response objects.
+- At that point, scheduler dispatch, post-approval mutating execution, and queue transitions remained disabled.
+- Changed files include:
+  - `packages/brain-core/src/types.ts`
+  - `packages/brain-core/src/index.ts`
+  - `packages/desktop-client/src/index.ts`
+  - `apps/desktop/src-tauri/Cargo.toml`
+  - `apps/desktop/src-tauri/src/direct_model.rs`
+  - `apps/desktop/src-tauri/src/lib.rs`
+  - `brain/api/contracts.md`
+  - `brain/api/endpoints.md`
+  - `brain/features/automation-runs.md`
+  - `brain/system/architecture.md`
+  - `brain/decisions/2026-06-15-direct-model-provider-runners.md`
+  - `brain/plans/2026-06-12-feature-runner-model-catalog-settings.md`
+  - `brain/progress.md`
+- Verification kept lightweight per fast Bun monorepo command discipline; project-wide typecheck/build/Cargo dependency resolution not run in this slice.
+
 ### Direct Model Runtime Contract Scaffold (2026-06-15)
 
 - Added shared direct-provider runtime types for tool specs, messages, tool calls/results, turn inputs, turn events, provider contracts, and the runtime contract response.
 - Added a Rust direct-model runtime contract scaffold with DeepSeek/Gemini providers, tool schemas for `read_file`, `search_text`, `apply_patch`, `run_command`, and `finish_task`, structured event kinds, and approval-required tool metadata.
 - Exposed `list_direct_model_runtime_contract` through Tauri and the desktop client.
 - Settings > Agents now shows direct-provider runtime contract counts in the existing harness capability list.
-- Dispatch is still intentionally disabled for direct-provider runners until provider network adapters, tool execution, approval gating, and queue transitions are wired end to end.
+- Implementation dispatch was enabled for direct-provider runners after provider network adapters, tool execution, approval gating, and queue reconciliation were wired; direct review dispatch was still pending at that point.
 - Changed files include:
   - `packages/brain-core/src/types.ts`
   - `packages/brain-core/src/index.ts`
@@ -40,7 +265,7 @@ Tracks durable implementation progress and planning changes.
   - Gemini maps normalized turns to `streamGenerateContent` with `systemInstruction`, `contents`, `tools[].functionDeclarations`, `toolConfig`, and function-response parts for tool results.
 - Exposed `preview_direct_model_provider_request` through Tauri and the desktop client. The command validates and returns a request envelope with placeholder auth headers; it does not send network requests or read API keys.
 - Settings > Agents now includes request-shape counts in the direct-provider runtime summary.
-- Dispatch remains intentionally disabled for direct providers.
+- Implementation dispatch was enabled for direct providers; direct review dispatch was still pending at that point.
 - Changed files include:
   - `packages/brain-core/src/types.ts`
   - `packages/brain-core/src/index.ts`
@@ -64,7 +289,7 @@ Tracks durable implementation progress and planning changes.
   - DeepSeek SSE chunks map `choices[].delta.content` to `message.delta`, partial `delta.tool_calls` to `tool.started`, finish reasons to `turn.completed`/`tool.completed`, and usage into string metadata.
   - Gemini chunks map `candidates[].content.parts[].text` to `message.delta`, `functionCall` parts to `tool.started`, `finishReason` to `turn.completed`, and `usageMetadata` into string metadata.
 - Exposed `preview_direct_model_stream_events` through Tauri and the desktop client. The command returns normalized direct turn events but does not append harness JSONL, mutate threads, execute tools, read API keys, or send provider requests.
-- Dispatch remains intentionally disabled for direct providers.
+- Implementation dispatch was enabled for direct providers; direct review dispatch was still pending at that point.
 - Changed files include:
   - `packages/brain-core/src/types.ts`
   - `packages/brain-core/src/index.ts`
@@ -143,7 +368,7 @@ Tracks durable implementation progress and planning changes.
   - `finish_task` returns the requested summary/status as a tool result without changing queue state.
   - `apply_patch` and `run_command` return approval-required results and do not mutate files or launch commands yet.
 - Added a desktop-client wrapper for the new command.
-- Provider networking, mutating tool execution, approval request creation, direct dispatch, and queue transitions remain disabled.
+- At that point, provider networking, mutating tool execution, approval request creation, direct dispatch, and queue transitions remained disabled.
 - Changed files include:
   - `packages/brain-core/src/types.ts`
   - `packages/brain-core/src/index.ts`
@@ -188,8 +413,8 @@ Tracks durable implementation progress and planning changes.
 - Added disabled-by-default catalog entries for `direct-deepseek` and `direct-gemini`, including provider id, API style, API-key environment variable, and current model lists.
 - Updated Rust settings defaults, normalization, and validation so direct-provider metadata is preserved and malformed direct entries are rejected.
 - Settings > Agents now displays runner kind plus provider/API metadata in the runner catalog.
-- Harness capability metadata now lists DeepSeek Direct and Gemini Direct as planned direct-provider runtimes while the direct Brain Loop tool-loop remains unwired.
-- Added a dependency-free direct-model runtime boundary module so dispatch can recognize direct providers and return an explicit pending-runtime error instead of treating them as unknown CLIs.
+- Harness capability metadata now lists DeepSeek Direct and Gemini Direct as direct-provider runtimes.
+- Added a dependency-free direct-model runtime boundary module so dispatch can recognize direct providers and keep unsupported roles out of the CLI runner path.
 - Added ADR `brain/decisions/2026-06-15-direct-model-provider-runners.md`.
 - Changed files include:
   - `packages/brain-core/src/types.ts`
@@ -340,12 +565,12 @@ Tracks durable implementation progress and planning changes.
   - `brain/tasks/done.md`
   - `brain/progress.md`
 - Checks passed: `bun --filter @brain-loop/desktop scheduler:qa`; `bun --filter @brain-loop/brain-core typecheck`; `bun --filter @brain-loop/desktop-client typecheck`; `bun --filter @brain-loop/desktop typecheck`; `bun --filter @brain-loop/desktop build`; `bun --filter @brain-loop/desktop visual:qa`; `git diff --check`.
-- Rust/Cargo validation remains blocked because `cargo` is not installed on this host.
+- At that point Rust/Cargo validation was blocked by PATH/tool discovery; a later `rust:check` script resolves Cargo from `~/.cargo/bin/cargo`.
 
 ### Codex Sidebar And Agent Chat Polish Slice (2026-06-15)
 
 - Flattened the sidebar around the latest Codex-style feedback:
-  - Review, Implementation, and Approval use ghost-button rows with no icons, subtitles, or card borders.
+  - At that point Review, Implementation, and Approval used ghost-button rows with no icons, subtitles, or card borders.
   - Thread rows are title-only with compact elapsed time on the right and reduced typography.
   - The sidebar keeps the glass-like dark translucent surface and fixed top actions above the scrollable thread list.
 - Removed the remaining mismatched main-surface background by aligning the workspace to the root `#141414` background.
@@ -680,7 +905,7 @@ Tracks durable implementation progress and planning changes.
 ### Capacity Agent Thread Pivot UI Slice (2026-06-15)
 
 - Began implementation of the latest pivot by updating the desktop shell toward the requested Codex-like model.
-- Added fixed top sidebar actions for Review, Implementation, and Approval, with the thread list scrolling below them.
+- At that point fixed top sidebar actions were Review, Implementation, and Approval, with the thread list scrolling below them.
 - Added a collapsible glass-like sidebar with a Codex-style toggle and preserved Settings in the footer.
 - Replaced the previous dashboard-style home content with a centered Brain Loop icon and app name while the main surface decision remains open.
 - Added an opened-agent chat surface with project scope, two placeholder top-right icon actions, Codex-like message blocks, status metrics, and run-result alerts.
@@ -1403,3 +1628,39 @@ Tracks durable implementation progress and planning changes.
   - `brain/features/automation-runs.md`
   - `brain/features/threaded-terminals.md`
 - Installed Brain skills under `~/.codex/skills` were patched outside the repo writable root to use `~/.brain-loop` and `settings.toml`; skill loader paths under `~/.codex/skills` remain unchanged.
+
+### Project Folder Onboarding And Sidebar Automation Control (2026-06-16)
+
+- Added project folder inspection for Add Project so the desktop app can select a folder, infer project name/id/path, and preview Brain setup before creation.
+- Added project Brain onboarding during project creation:
+  - Existing `<project>/brain/` folders are preserved as project-local Brain storage.
+  - Projects without `brain/` receive external Brain storage under `~/.brain-loop/project-brains/<project-id>/brain/`.
+  - `AGENTS.md` or `AGENT.md` and `CLAUDE.md` receive idempotent managed Brain Loop instruction blocks.
+- Extended project records with optional `brainPath`, `brainStorage`, and read-only `brainPathExists`.
+- At that point the sidebar play/pause automation control was topmost; it later moved to the compact footer status slot while the collapsed/minimized sidebar drag strip remained constrained.
+- Added ADR `brain/decisions/2026-06-16-project-brain-onboarding-policy.md`.
+
+### Simplified Scheduling Settings Surface (2026-06-17)
+
+- Split Settings > Automation into clearer intent groups: `Automation runtime`, `Agent pools`, `Implementation queue order`, and `Fairness limits`.
+- Kept the persisted `settings.toml` schema compatible while changing the UI to show `schedulingPolicy` as a two-option queue-order control.
+- Changed MaxLoop cap editing so only explicit runner, project, and runner-project overrides are rendered as editable rows; inherited caps remain implicit.
+- Updated scheduler/API feature docs to reflect the renamed settings surface and unchanged `schedulingPolicy` contract.
+- Changed files:
+  - `apps/desktop/src/components/settings/settings-page.tsx`
+  - `brain/features/background-scheduler.md`
+  - `brain/features/automation-runs.md`
+  - `brain/api/contracts.md`
+  - `brain/progress.md`
+
+### Brain Handoff Orchestration Thread Contract (2026-06-18)
+
+- Clarified that Brain skill-created handoffs should create lightweight parent orchestration threads, not just queue items.
+- `brain-batch-handoff` is expected to create or update one orchestration thread for the intake conversion session, with a compact task table and links to every generated handoff and queue item.
+- Standalone `brain-handoff` is expected to create a one-task orchestration thread unless it is attaching to an existing batch orchestration.
+- Queue items created by Brain handoff skills must carry `orchestrationId` and `orchestrationTitle`, with the parent orchestration linking queue ids, generated worker thread ids, and handoff paths.
+- Changed files:
+  - `brain/skills/brain-loop-orchestration-handoff/SKILL.md`
+  - `brain/features/orchestration.md`
+  - `brain/api/contracts.md`
+  - `brain/progress.md`

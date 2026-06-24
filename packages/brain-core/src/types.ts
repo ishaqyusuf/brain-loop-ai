@@ -96,6 +96,30 @@ export interface DirectModelHarnessRecordResult {
   completedMessages: number;
 }
 
+export interface DirectModelTurnExecutionResult {
+  providerRequest: DirectModelProviderRequest;
+  turnId: string;
+  events: DirectModelTurnEvent[];
+  harnessRecord?: DirectModelHarnessRecordResult | null;
+  done: boolean;
+  usage?: Record<string, string>;
+  rawResponseBytes: number;
+}
+
+export interface DirectModelToolLoopInput {
+  turnInput: DirectModelTurnInput;
+  maxIterations?: number | null;
+}
+
+export interface DirectModelToolLoopResult {
+  turns: DirectModelTurnExecutionResult[];
+  toolResults: DirectModelToolExecutionResult[];
+  approvalRequests: DirectModelToolApprovalResult[];
+  completed: boolean;
+  stoppedReason: string;
+  iterations: number;
+}
+
 export interface DirectModelRuntimeContract {
   providers: DirectModelProviderContract[];
   requestShapes: DirectModelProviderRequestShape[];
@@ -145,6 +169,18 @@ export interface DirectModelToolExecutionResult {
 }
 
 export interface DirectModelToolApprovalResult {
+  approvalRequest: ApprovalRequest;
+  toolExecutionResult: DirectModelToolExecutionResult;
+  harnessEvent?: HarnessEventInput | null;
+  thread?: AgentThread | null;
+}
+
+export interface DirectModelApprovedToolExecutionInput {
+  approvalRequestId: string;
+  toolExecution?: DirectModelToolExecutionInput | null;
+}
+
+export interface DirectModelApprovedToolExecutionResult {
   approvalRequest: ApprovalRequest;
   toolExecutionResult: DirectModelToolExecutionResult;
   harnessEvent?: HarnessEventInput | null;
@@ -271,7 +307,25 @@ export interface BrainProject {
   implementationIntervalMinutes: number;
   priority: Priority;
   autoMergeOnReviewPass?: boolean;
+  brainPath?: string | null;
+  brainStorage?: "project" | "external" | null;
   pathExists?: boolean;
+  brainPathExists?: boolean;
+}
+
+export interface ProjectFolderInspectionInput {
+  path: string;
+  existingProjectIds?: string[];
+}
+
+export interface ProjectFolderInspection {
+  path: string;
+  name: string;
+  id: string;
+  hasProjectBrain: boolean;
+  brainPath: string;
+  brainStorage: "project" | "external";
+  instructionFiles: string[];
 }
 
 export interface QueueHistoryEntry {
@@ -289,6 +343,8 @@ export interface QueueHistoryEntry {
 
 export interface QueueItem {
   id: string;
+  orchestrationId?: string | null;
+  orchestrationTitle?: string | null;
   threadTitle?: string;
   threadName?: string;
   taskName?: string;
@@ -437,6 +493,100 @@ export interface HarnessSession {
   startedAt: string;
 }
 
+export type OrchestrationOrigin =
+  | "brain-loop"
+  | "codex"
+  | "claude"
+  | "manual"
+  | string;
+
+export type OrchestrationStatus =
+  | "draft"
+  | "refining"
+  | "ready-for-handoff"
+  | "handed-off"
+  | "archived";
+
+export interface OrchestrationMessage {
+  id: string;
+  role: "system" | "user" | "assistant" | "agent" | string;
+  body: string;
+  createdAt: string;
+  agent?: string | null;
+  model?: string | null;
+  metadata?: Record<string, string>;
+}
+
+export interface OrchestrationThread {
+  id: string;
+  title: string;
+  projectId: string;
+  projectName: string;
+  projectPath: string;
+  originAgent: OrchestrationOrigin;
+  status: OrchestrationStatus;
+  model?: string | null;
+  messages: OrchestrationMessage[];
+  linkedQueueItemIds: string[];
+  linkedThreadIds: string[];
+  linkedHandoffPaths: string[];
+  createdAt: string;
+  updatedAt: string;
+  archivedAt?: string | null;
+}
+
+export interface OrchestrationThreadInput {
+  title: string;
+  projectId: string;
+  projectName: string;
+  projectPath: string;
+  originAgent?: OrchestrationOrigin | null;
+  model?: string | null;
+  initialMessage?: string | null;
+}
+
+export interface OrchestrationMessageInput {
+  orchestrationId: string;
+  role: OrchestrationMessage["role"];
+  body: string;
+  agent?: string | null;
+  model?: string | null;
+  metadata?: Record<string, string>;
+}
+
+export interface OrchestrationRunInput {
+  orchestrationId: string;
+}
+
+export interface OrchestrationProjectUpdateInput {
+  orchestrationId: string;
+  projectId: string;
+}
+
+export interface OrchestrationHandoffTaskInput {
+  title: string;
+  body: string;
+  priority?: Priority | null;
+  agent?: ProjectAgent | null;
+  recommendedAgent?: ProjectAgent | null;
+  recommendedModel?: string | null;
+}
+
+export interface OrchestrationHandoffInput {
+  orchestrationId: string;
+  tasks: OrchestrationHandoffTaskInput[];
+  sourceAgent?: OrchestrationOrigin | null;
+  registerProjectIfMissing?: boolean;
+  importedProjectEnabled?: boolean;
+}
+
+export interface OrchestrationHandoffResult {
+  orchestration: OrchestrationThread;
+  queueItems: QueueItem[];
+  project: BrainProject;
+  projectCreated: boolean;
+}
+
 export interface AgentThreadMessage {
   id: string;
   role: AgentThreadMessageRole | string;
@@ -450,6 +600,7 @@ export interface AgentThreadMessage {
 export interface AgentThread {
   id: string;
   queueItemId: string;
+  orchestrationId?: string | null;
   projectId: string;
   projectName?: string | null;
   projectPath: string;
@@ -552,6 +703,7 @@ export interface ApprovalRequest {
   projectId?: string | null;
   runnerId?: string | null;
   sessionId?: string | null;
+  metadata?: Record<string, string>;
   requestedBy: string;
   requestedAt: string;
   resolvedBy?: string | null;
@@ -570,6 +722,7 @@ export interface ApprovalRequestInput {
   projectId?: string | null;
   runnerId?: string | null;
   sessionId?: string | null;
+  metadata?: Record<string, string>;
   requestedBy?: string | null;
 }
 

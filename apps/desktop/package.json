@@ -12,6 +12,7 @@
     "tauri:build": "PATH=\"$HOME/.cargo/bin:$PATH\" tauri build",
     "visual:qa": "bun scripts/codex-visual-qa.mjs",
     "scheduler:qa": "bun scripts/scheduler-contract-qa.mjs",
+    "rust:check": "bun scripts/rust-check.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit"
   },

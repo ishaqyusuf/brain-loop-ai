@@ -25,14 +25,27 @@ function appearsBefore(content, first, second) {
 }
 
 const lib = read("apps/desktop/src-tauri/src/lib.rs");
+const orchestration = read("apps/desktop/src-tauri/src/orchestration.rs");
+const landing = read("apps/desktop/src-tauri/src/landing.rs");
 const scheduler = read("apps/desktop/src-tauri/src/scheduler.rs");
 const runner = read("apps/desktop/src-tauri/src/runner.rs");
 const worktree = read("apps/desktop/src-tauri/src/worktree.rs");
 const agentThread = read("apps/desktop/src-tauri/src/agent_thread.rs");
 const settingsPage = read("apps/desktop/src/components/settings/settings-page.tsx");
+const sidebar = read("apps/desktop/src/components/sidebar.tsx");
+const projectTable = read("apps/desktop/src/components/tables/projects/project-table.tsx");
+const approvalPanel = read("apps/desktop/src/components/approval-panel.tsx");
+const appShell = read("apps/desktop/src/app.tsx");
+const orchestrationActions = read("apps/desktop/src/hooks/use-orchestration-actions.ts");
+const orchestrationDisplay = read("apps/desktop/src/lib/orchestration-display.ts");
+const orchestrationStartView = read("apps/desktop/src/components/orchestration/orchestration-start-view.tsx");
+const sidebarViewModel = read("apps/desktop/src/hooks/use-sidebar-view-model.ts");
+const dashboardView = read("apps/desktop/src/components/dashboard/dashboard-view.tsx");
+const desktopClient = read("packages/desktop-client/src/index.ts");
 const brainTypes = read("packages/brain-core/src/types.ts");
 const brainConstants = read("packages/brain-core/src/constants.ts");
 const desktopPackage = JSON.parse(read("apps/desktop/package.json"));
+const schedulerDefaultSources = `${brainConstants}\n${lib}`;
 
 addCheck(
   "Capacity settings contract",
@@ -102,15 +115,200 @@ addCheck(
 );
 
 addCheck(
+  "Direct-provider review dispatch",
+  includesAll(lib, [
+    "fn direct_review_spec",
+    "fn spawn_direct_review_runner",
+    "fn apply_direct_review_result",
+    "direct_review_tool_specs",
+    "direct_review_runner_launch",
+    "run_implementation_once(followup_app.clone())",
+  ]) &&
+    includesAll(settingsPage, [
+      "setRoleRunner(\"review\"",
+      "disabled={!runner.enabled}",
+    ]) &&
+    !lib.includes(["Default review runner", "CLI runner"].join(" must be a ")),
+  "Direct DeepSeek/Gemini runners should be selectable for review and dispatch through the Brain Loop direct runtime.",
+  ["apps/desktop/src-tauri/src/lib.rs", "apps/desktop/src/components/settings/settings-page.tsx"],
+);
+
+addCheck(
+  "Live orchestration runtime",
+  includesAll(orchestration, [
+    "pub fn run_live_turn",
+    "run_codex_orchestrator",
+    "run_claude_orchestrator",
+    "live-orchestration-turn",
+    "--sandbox",
+    "read-only",
+    "--permission-mode",
+    "plan",
+  ]) &&
+    includesAll(lib, ["fn run_orchestration_turn", "run_orchestration_turn,"]) &&
+    includesAll(desktopClient, ["runOrchestrationTurn", "\"run_orchestration_turn\""]) &&
+    includesAll(orchestrationActions, ["runOrchestrationTurn({ orchestrationId: updated.id })"]) &&
+    !orchestrationActions.includes("function orchestrationAssistantResponse") &&
+    !appShell.includes("function orchestrationAssistantResponse"),
+  "Orchestrator chat responses should come from the selected local Codex/Claude runtime, not static UI guidance.",
+  [
+    "apps/desktop/src-tauri/src/orchestration.rs",
+    "apps/desktop/src-tauri/src/lib.rs",
+    "packages/desktop-client/src/index.ts",
+    "apps/desktop/src/app.tsx",
+  ],
+);
+
+addCheck(
+  "Grouped orchestrator model selector",
+  includesAll(`${orchestrationDisplay}\n${orchestrationStartView}`, [
+    "const orchestratorModelGroups",
+    "provider: \"codex\"",
+    "label: \"Codex\"",
+    "provider: \"claude\"",
+    "label: \"Claude\"",
+    "function OrchestratorModelDropdown",
+    "DropdownMenuLabel",
+    "group.models.map",
+  ]) &&
+    appearsBefore(orchestrationDisplay, "provider: \"codex\"", "provider: \"claude\""),
+  "New orchestration should expose a grouped orchestrator dropdown with Codex models first and Claude models second.",
+  ["apps/desktop/src/app.tsx"],
+);
+
+addCheck(
+  "Requested sidebar navigation and footer play control",
+  includesAll(sidebarViewModel, [
+    "id: \"dashboard\"",
+    "name: \"Dashboard\"",
+    "id: \"new-orchestrator\"",
+    "name: \"New Orchestrator\"",
+    "id: \"codex-review\"",
+    "id: \"implementation\"",
+    "id: \"approvals\"",
+  ]) &&
+    appearsBefore(sidebarViewModel, "id: \"dashboard\"", "id: \"new-orchestrator\"") &&
+    appearsBefore(sidebarViewModel, "id: \"new-orchestrator\"", "id: \"codex-review\"") &&
+    appearsBefore(sidebarViewModel, "id: \"codex-review\"", "id: \"implementation\"") &&
+    appearsBefore(sidebarViewModel, "id: \"implementation\"", "id: \"approvals\"") &&
+    includesAll(sidebar, [
+      "automationUsagePercent(schedulerStatus, status)}%",
+      "function AutomationIconToggle",
+      "TooltipContent>{label}</TooltipContent>",
+      "size=\"icon-sm\"",
+    ]) &&
+    !sidebar.includes("function AutomationToggle"),
+  "The fixed sidebar actions should be Dashboard, New Orchestrator, Review, Implementation, Approval, and play/pause should be an icon-only tooltip control beside the footer percentage.",
+  ["apps/desktop/src/app.tsx", "apps/desktop/src/components/sidebar.tsx"],
+);
+
+addCheck(
+  "App-owned scheduler defaults",
+  includesAll(brainConstants, [
+    "jobName: \"brain-loop-app-scheduler\"",
+    "lastGatewayStatus: \"not-used\"",
+    "codexAutomationMode: \"implementation-and-review\"",
+    "External dispatcher is not used",
+  ]) &&
+    includesAll(lib, [
+      "\"brain-loop-app-scheduler\".to_string()",
+      "\"not-used\".to_string()",
+      "\"implementation-and-review\".to_string()",
+      "External dispatcher is not used",
+    ]) &&
+    !schedulerDefaultSources.includes("\"brain-implementation-dispatcher\"") &&
+    !schedulerDefaultSources.includes("Legacy external dispatcher is stopped"),
+  "Fresh settings defaults should point at Brain Loop's app-owned scheduler, not an external Hermes-shaped dispatcher.",
+  ["packages/brain-core/src/constants.ts", "apps/desktop/src-tauri/src/lib.rs"],
+);
+
+addCheck(
+  "Dashboard bird-view surface",
+  includesAll(dashboardView, [
+    "function DashboardView",
+    "Operations",
+    "Dashboard",
+    "Search tasks, status, project, handoff",
+    "projectFilter",
+    "reviewWindow",
+    "Week review",
+    "Month review",
+    "Approval Policy",
+    "Project Policy",
+    "Review Queue",
+    "manualLandingItems",
+  ]),
+  "Dashboard should provide overview analytics, task list/search, project filtering, week/month review, approval mode, and review queue surfaces.",
+  ["apps/desktop/src/app.tsx"],
+);
+
+addCheck(
+  "Manual approval policy visibility",
+  includesAll(projectTable, [
+    "Approval Mode",
+    "SelectItem value=\"manual\"",
+    "SelectItem value=\"automatic\"",
+    "autoMergeOnReviewPass: value === \"automatic\"",
+    "Manual keeps review-passed work in approvals",
+  ]) &&
+    includesAll(sidebarViewModel, [
+      "description: `${pendingApprovalRequests.length} pending`",
+      "count: pendingApprovalRequests.length",
+    ]) &&
+    includesAll(dashboardView, [
+      "manualLandingItems",
+    ]) &&
+    includesAll(landing, [
+      "if project.auto_merge_on_review_pass",
+      "request_merge_approval",
+      "record_merge_approval_wait",
+      "land_queue_item_by_id",
+    ]) &&
+    includesAll(approvalPanel, [
+      "listApprovalRequests",
+      "approveRequest",
+      "executeApprovedDirectModelTool",
+    ]) &&
+    !approvalPanel.includes("Stub Command") &&
+    !approvalPanel.includes("manual-stub") &&
+    !approvalPanel.includes("sampleRequests") &&
+    !sidebarViewModel.includes("pendingApprovalRequests.length || status.blockedItems"),
+  "Projects should expose Manual/Automatic approval mode, manual review-passed work should create approval requests, and the Approval sidebar count should reflect pending approvals.",
+  [
+    "apps/desktop/src/components/tables/projects/project-table.tsx",
+    "apps/desktop/src/app.tsx",
+    "apps/desktop/src-tauri/src/landing.rs",
+    "apps/desktop/src/components/approval-panel.tsx",
+  ],
+);
+
+addCheck(
   "Direct implementation-to-review handoff",
   includesAll(runner, [
     "item.status == \"started\"",
     "\"submitted\"",
     "should_request_review = true",
+    "automation_running",
     "crate::run_review_once(app.clone())",
   ]),
-  "A successful implementation runner should submit the queue item and ask the review pool to fill.",
+  "A successful implementation runner should submit the queue item and ask the review pool to fill only while automation is still running.",
   ["apps/desktop/src-tauri/src/runner.rs"],
+);
+
+addCheck(
+  "Review fix requests loop back to implementation",
+  includesAll(runner, [
+    "item.status == \"reviewed-fix-request\"",
+    "is_review_runner",
+    "should_request_fix_implementation = true",
+    "crate::run_implementation_once(app.clone())",
+  ]) &&
+    includesAll(agentThread, [
+      "\"queued\" | \"reviewed-fix-request\" => \"waiting\"",
+      "\"approved\" => \"done\"",
+    ]),
+  "A review-requested fix should keep the queue-linked worker thread open, request implementation capacity again, and only mark the thread done after approval.",
+  ["apps/desktop/src-tauri/src/runner.rs", "apps/desktop/src-tauri/src/agent_thread.rs"],
 );
 
 addCheck(
@@ -147,8 +345,9 @@ addCheck(
 
 addCheck(
   "Scheduler QA script is wired",
-  desktopPackage.scripts?.["scheduler:qa"] === "bun scripts/scheduler-contract-qa.mjs",
-  "The desktop package should expose the scheduler contract QA command.",
+  desktopPackage.scripts?.["scheduler:qa"] === "bun scripts/scheduler-contract-qa.mjs" &&
+    desktopPackage.scripts?.["rust:check"] === "bun scripts/rust-check.mjs",
+  "The desktop package should expose scheduler contract QA and a Cargo-discovering Rust check command.",
   ["apps/desktop/package.json"],
 );
 

@@ -12,11 +12,14 @@ mod harness;
 mod worktree;
 mod landing;
 mod direct_model;
+mod project_setup;
+mod orchestration;
 
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
 use std::time::Duration;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -53,8 +56,8 @@ fn default_two_minutes() -> u32 {
     2
 }
 
-fn default_five_seconds() -> u32 {
-    5
+fn default_sixty_seconds() -> u32 {
+    60
 }
 
 fn default_one() -> u32 {
@@ -66,11 +69,11 @@ fn default_thirty_minutes() -> u32 {
 }
 
 fn default_dispatcher_job_name() -> String {
-    "brain-implementation-dispatcher".to_string()
+    "brain-loop-app-scheduler".to_string()
 }
 
 fn default_dispatcher_desired_status() -> String {
-    "running".to_string()
+    "stopped".to_string()
 }
 
 fn default_epoch_timestamp() -> String {
@@ -82,11 +85,11 @@ fn default_dispatcher_updated_by() -> String {
 }
 
 fn default_dispatcher_gateway_status() -> String {
-    "not-loaded".to_string()
+    "not-used".to_string()
 }
 
 fn default_dispatcher_codex_automation_mode() -> String {
-    "review-only".to_string()
+    "implementation-and-review".to_string()
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -96,7 +99,7 @@ struct Settings {
     default_review_interval_minutes: u32,
     #[serde(default = "default_two_minutes")]
     default_implementation_interval_minutes: u32,
-    #[serde(default = "default_five_seconds")]
+    #[serde(default = "default_sixty_seconds")]
     capacity_poll_interval_seconds: u32,
     #[serde(default = "default_one")]
     max_running_processes: u32,
@@ -283,7 +286,13 @@ pub(crate) struct BrainProject {
     #[serde(default)]
     auto_merge_on_review_pass: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    brain_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    brain_storage: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     path_exists: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    brain_path_exists: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -305,6 +314,10 @@ struct QueueHistoryEntry {
 #[serde(rename_all = "camelCase")]
 struct QueueItem {
     id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    orchestration_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    orchestration_title: Option<String>,
     #[serde(default, alias = "threadName", skip_serializing_if = "Option::is_none")]
     thread_title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -418,12 +431,15 @@ fn default_implementation_dispatcher() -> ImplementationDispatcher {
     ImplementationDispatcher {
         job_name: default_dispatcher_job_name(),
         desired_status: default_dispatcher_desired_status(),
-        last_known_status: "missing".to_string(),
+        last_known_status: "stopped".to_string(),
         last_checked_at: default_epoch_timestamp(),
         last_updated_by: default_dispatcher_updated_by(),
         last_gateway_status: default_dispatcher_gateway_status(),
         codex_automation_mode: default_dispatcher_codex_automation_mode(),
-        last_error: None,
+        last_error: Some(
+            "External dispatcher is not used; Brain Loop app-owned scheduler is the automation runtime."
+                .to_string(),
+        ),
     }
 }
 
@@ -431,7 +447,7 @@ fn default_settings() -> Settings {
     Settings {
         default_review_interval_minutes: 2,
         default_implementation_interval_minutes: 2,
-        capacity_poll_interval_seconds: 5,
+        capacity_poll_interval_seconds: 60,
         max_running_processes: 1,
         max_implementation_agents: Some(1),
         max_review_agents: Some(1),
@@ -525,6 +541,24 @@ fn normalize_settings(settings: &mut Settings) {
     }
     settings.capacity_poll_interval_seconds =
         settings.capacity_poll_interval_seconds.clamp(1, 60);
+
+    let review_default_is_valid = settings
+        .runner_catalog
+        .iter()
+        .find(|entry| entry.id == settings.default_review_runner)
+        .map(|entry| entry.enabled)
+        .unwrap_or(false);
+    if !review_default_is_valid {
+        let fallback_runner = default_review_runner();
+        if let Some(entry) = settings
+            .runner_catalog
+            .iter()
+            .find(|entry| entry.id == fallback_runner && entry.enabled)
+        {
+            settings.default_review_runner = entry.id.clone();
+            settings.default_review_model = entry.default_model.clone();
+        }
+    }
 }
 
 fn read_settings_file() -> Result<Settings, String> {
@@ -794,6 +828,15 @@ fn list_projects() -> Result<Vec<BrainProject>, String> {
     let mut projects = read_projects()?;
     for project in projects.iter_mut() {
         project.path_exists = Some(std::path::Path::new(&project.path).exists());
+        let (brain_path, brain_storage, brain_path_exists) = project_setup::infer_brain_fields(
+            project.id.as_str(),
+            project.path.as_str(),
+            project.brain_path.as_deref(),
+            project.brain_storage.as_deref(),
+        );
+        project.brain_path = brain_path;
+        project.brain_storage = brain_storage;
+        project.brain_path_exists = brain_path_exists;
     }
     Ok(projects)
 }
@@ -815,6 +858,7 @@ fn write_projects(projects: &[BrainProject]) -> Result<(), String> {
     let mut clean_projects = projects.to_vec();
     for project in clean_projects.iter_mut() {
         project.path_exists = None;
+        project.brain_path_exists = None;
     }
 
     atomic::atomic_write_json(&state::projects_path(), &clean_projects)
@@ -837,10 +881,22 @@ fn validate_project(project: &BrainProject) -> Result<(), String> {
     if !matches!(project.priority.as_str(), "high" | "medium" | "low") {
         return Err("Priority must be high, medium, or low.".to_string());
     }
+    if let Some(storage) = project.brain_storage.as_deref() {
+        if !matches!(storage, "project" | "external") {
+            return Err("Brain storage must be project or external.".to_string());
+        }
+    }
     if project.review_interval_minutes == 0 || project.implementation_interval_minutes == 0 {
         return Err("Intervals must be greater than zero.".to_string());
     }
     Ok(())
+}
+
+#[tauri::command]
+fn inspect_project_folder(
+    input: project_setup::ProjectFolderInspectionInput,
+) -> Result<project_setup::ProjectFolderInspection, String> {
+    project_setup::inspect_project_folder(input)
 }
 
 #[tauri::command]
@@ -852,11 +908,23 @@ fn create_project(mut project: BrainProject) -> Result<BrainProject, String> {
         return Err(format!("Project already exists: {}", project.id));
     }
 
+    let (brain_path, brain_storage) = project_setup::prepare_project_brain(
+        project.id.as_str(),
+        project.name.as_str(),
+        project.path.as_str(),
+    )?;
+    project.brain_path = Some(brain_path);
+    project.brain_storage = Some(brain_storage);
     project.path_exists = None;
+    project.brain_path_exists = None;
     projects.push(project.clone());
     write_projects(&projects)?;
 
     project.path_exists = Some(std::path::Path::new(&project.path).exists());
+    project.brain_path_exists = project
+        .brain_path
+        .as_deref()
+        .map(|path| std::path::Path::new(path).exists());
     Ok(project)
 }
 
@@ -870,10 +938,15 @@ fn update_project(mut project: BrainProject) -> Result<BrainProject, String> {
         .ok_or_else(|| format!("Project not found: {}", project.id))?;
 
     project.path_exists = None;
+    project.brain_path_exists = None;
     projects[index] = project.clone();
     write_projects(&projects)?;
 
     project.path_exists = Some(std::path::Path::new(&project.path).exists());
+    project.brain_path_exists = project
+        .brain_path
+        .as_deref()
+        .map(|path| std::path::Path::new(path).exists());
     Ok(project)
 }
 
@@ -888,10 +961,15 @@ fn set_project_enabled(project_id: String, enabled: bool) -> Result<BrainProject
     projects[index].enabled = enabled;
     let mut project = projects[index].clone();
     project.path_exists = None;
+    project.brain_path_exists = None;
     projects[index] = project.clone();
     write_projects(&projects)?;
 
     project.path_exists = Some(std::path::Path::new(&project.path).exists());
+    project.brain_path_exists = project
+        .brain_path
+        .as_deref()
+        .map(|path| std::path::Path::new(path).exists());
     Ok(project)
 }
 
@@ -1126,6 +1204,382 @@ fn archive_agent_thread(
     agent_thread::archive_agent_thread(&thread_id, &by, reason.as_deref())
 }
 
+#[tauri::command]
+fn list_orchestrations() -> Result<Vec<orchestration::OrchestrationThread>, String> {
+    orchestration::list_orchestrations()
+}
+
+#[tauri::command]
+fn create_orchestration(
+    input: orchestration::OrchestrationThreadInput,
+) -> Result<orchestration::OrchestrationThread, String> {
+    orchestration::create_orchestration(input)
+}
+
+#[tauri::command]
+fn append_orchestration_message(
+    input: orchestration::OrchestrationMessageInput,
+) -> Result<orchestration::OrchestrationThread, String> {
+    orchestration::append_message(input)
+}
+
+#[tauri::command]
+fn run_orchestration_turn(
+    input: orchestration::OrchestrationRunInput,
+) -> Result<orchestration::OrchestrationThread, String> {
+    orchestration::run_live_turn(input)
+}
+
+#[derive(Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+struct OrchestrationProjectUpdateInput {
+    orchestration_id: String,
+    project_id: String,
+}
+
+#[tauri::command]
+fn update_orchestration_project(
+    input: OrchestrationProjectUpdateInput,
+) -> Result<orchestration::OrchestrationThread, String> {
+    let mut thread = orchestration::read_orchestration(&input.orchestration_id)?;
+    let projects = read_projects()?;
+    let project = projects
+        .iter()
+        .find(|project| project.id == input.project_id)
+        .ok_or_else(|| format!("Project not found: {}", input.project_id))?;
+    thread.project_id = project.id.clone();
+    thread.project_name = project.name.clone();
+    thread.project_path = project.path.clone();
+    thread.updated_at = atomic::utc_now_iso();
+    orchestration::write_orchestration(&thread)?;
+    Ok(thread)
+}
+
+#[derive(Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+struct OrchestrationHandoffTaskInput {
+    title: String,
+    body: String,
+    #[serde(default)]
+    priority: Option<String>,
+    #[serde(default)]
+    agent: Option<String>,
+    #[serde(default)]
+    recommended_agent: Option<String>,
+    #[serde(default)]
+    recommended_model: Option<String>,
+}
+
+#[derive(Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+struct OrchestrationHandoffInput {
+    orchestration_id: String,
+    tasks: Vec<OrchestrationHandoffTaskInput>,
+    #[serde(default)]
+    source_agent: Option<String>,
+    #[serde(default)]
+    register_project_if_missing: Option<bool>,
+    #[serde(default)]
+    imported_project_enabled: Option<bool>,
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+struct OrchestrationHandoffResult {
+    orchestration: orchestration::OrchestrationThread,
+    queue_items: Vec<brain::QueueItem>,
+    project: BrainProject,
+    project_created: bool,
+}
+
+#[tauri::command]
+fn handoff_orchestration(
+    input: OrchestrationHandoffInput,
+) -> Result<OrchestrationHandoffResult, String> {
+    let mut thread = orchestration::read_orchestration(&input.orchestration_id)?;
+    let (project, project_created) = ensure_orchestration_project(
+        &thread,
+        input.register_project_if_missing.unwrap_or(true),
+        input.imported_project_enabled.unwrap_or(false),
+    )?;
+    let settings = read_settings_file().unwrap_or_else(|_| default_settings());
+    let tasks = if input.tasks.is_empty() {
+        vec![OrchestrationHandoffTaskInput {
+            title: thread.title.clone(),
+            body: orchestration_messages_as_handoff_body(&thread),
+            priority: Some(project.priority.clone()),
+            agent: Some(project.default_agent.clone()),
+            recommended_agent: Some(settings.default_implementation_runner.clone()),
+            recommended_model: Some(settings.default_implementation_model.clone()),
+        }]
+    } else {
+        input.tasks
+    };
+
+    let mut created_items = Vec::new();
+    let now = atomic::utc_now_iso();
+    let artifact_dir = orchestration::artifacts_dir(&thread.id);
+    state::ensure_dir(&artifact_dir)
+        .map_err(|e| format!("Failed to prepare orchestration artifact directory: {}", e))?;
+
+    for (index, task) in tasks.iter().enumerate() {
+        let title = task.title.trim();
+        if title.is_empty() {
+            return Err("Handoff task title is required.".to_string());
+        }
+        if task.body.trim().is_empty() {
+            return Err(format!("Handoff task body is required for {}.", title));
+        }
+        let slug = orchestration::sanitize_segment(title);
+        let suffix = if tasks.len() > 1 {
+            format!("-{}", index + 1)
+        } else {
+            String::new()
+        };
+        let queue_id = unique_queue_id(&format!("{}-{}{}", thread.id, slug, suffix));
+        let plan_path = artifact_dir.join(format!("{}-plan.md", queue_id));
+        let handoff_path = artifact_dir.join(format!("{}-handoff.md", queue_id));
+        let source_agent = input
+            .source_agent
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(thread.origin_agent.as_str());
+        let plan = format!(
+            "# Plan: {title}\n\n## Source\n- Orchestration: {orchestration_id}\n- Project: {project_name}\n- Origin agent: {source_agent}\n\n## Goal\n{body}\n",
+            title = title,
+            orchestration_id = thread.id.as_str(),
+            project_name = thread.project_name.as_str(),
+            source_agent = source_agent,
+            body = task.body.trim(),
+        );
+        let handoff = format!(
+            "# Handoff: {title}\n\n## Orchestration\n- Orchestration ID: {orchestration_id}\n- Orchestration title: {orchestration_title}\n- Origin agent: {source_agent}\n\n## Project\n- Project ID: {project_id}\n- Project path: {project_path}\n\n## Task\n{body}\n",
+            title = title,
+            orchestration_id = thread.id.as_str(),
+            orchestration_title = thread.title.as_str(),
+            source_agent = source_agent,
+            project_id = project.id.as_str(),
+            project_path = project.path.as_str(),
+            body = task.body.trim(),
+        );
+        atomic::atomic_write_string(&plan_path, &plan)
+            .map_err(|e| format!("Failed to write orchestration plan artifact: {}", e))?;
+        atomic::atomic_write_string(&handoff_path, &handoff)
+            .map_err(|e| format!("Failed to write orchestration handoff artifact: {}", e))?;
+
+        let agent = normalized_agent(task.agent.as_deref().unwrap_or(project.default_agent.as_str()));
+        let recommended_agent = normalized_agent(
+            task.recommended_agent
+                .as_deref()
+                .unwrap_or(settings.default_implementation_runner.as_str()),
+        );
+        let recommended_model = task
+            .recommended_model
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| recommended_model_for_runner(&settings, recommended_agent.as_str()))
+            .unwrap_or_else(|| settings.default_implementation_model.clone());
+        let priority = normalized_priority(task.priority.as_deref().unwrap_or(project.priority.as_str()));
+        let queue_item = brain::QueueItem {
+            id: queue_id.clone(),
+            orchestration_id: Some(thread.id.clone()),
+            orchestration_title: Some(thread.title.clone()),
+            thread_title: Some(title.to_string()),
+            task_name: Some(title.to_string()),
+            project_id: project.id.clone(),
+            project_path: project.path.clone(),
+            worktree_path: None,
+            execution_path: None,
+            execution_strategy: None,
+            plan_path: plan_path.display().to_string(),
+            handoff_path: handoff_path.display().to_string(),
+            active_handoff_path: handoff_path.display().to_string(),
+            review_path: None,
+            status: "queued".to_string(),
+            agent: agent.clone(),
+            recommended_agent: recommended_agent.clone(),
+            recommendation_reason: "Created from Brain Loop orchestration handoff.".to_string(),
+            recommended_model: Some(recommended_model),
+            model_recommendation_reason: Some("Resolved while creating orchestration-linked queue item.".to_string()),
+            priority,
+            attempt: 1,
+            created_by: source_agent.to_string(),
+            picked_by: None,
+            created_at: now.clone(),
+            picked_at: None,
+            agent_started_at: None,
+            started_by: None,
+            runner_id: None,
+            review_runner_id: None,
+            session_id: None,
+            submitted_at: None,
+            blocked_at: None,
+            reviewed_at: None,
+            approved_at: None,
+            landing_status: None,
+            landing_branch: None,
+            landed_at: None,
+            landed_by: None,
+            landed_commit: None,
+            landing_error: None,
+            pre_landing_status: None,
+            pre_landing_commit: None,
+            pre_landing_committed_at: None,
+            pre_landing_commit_message: None,
+            last_error: None,
+            waiting_reason: None,
+            depends_on: Vec::new(),
+            blocked_by: Vec::new(),
+            history: vec![brain::QueueHistoryEntry {
+                at: now.clone(),
+                by: "brain-loop".to_string(),
+                status: Some("queued".to_string()),
+                note: Some(format!("Created from orchestration {}", thread.id)),
+                event: Some("orchestration_handoff_created".to_string()),
+                detail: Some(format!("Linked to orchestration {}", thread.id)),
+                review_path: None,
+                active_handoff_path: Some(handoff_path.display().to_string()),
+                handoff_path: Some(handoff_path.display().to_string()),
+                agent: Some(agent),
+            }],
+        };
+        brain::write_queue_item(&queue_item)
+            .map_err(|e| format!("Failed to write queue item {}: {}", queue_id, e))?;
+        if let Ok(value) = serde_json::to_value(&queue_item) {
+            let _ = agent_thread::upsert_from_queue_value(&value);
+        }
+        thread.linked_queue_item_ids.push(queue_id);
+        thread
+            .linked_thread_ids
+            .push(agent_thread::thread_id_for_queue_item(&queue_item.id));
+        thread
+            .linked_handoff_paths
+            .push(handoff_path.display().to_string());
+        created_items.push(queue_item);
+    }
+
+    thread.status = "handed-off".to_string();
+    thread.updated_at = atomic::utc_now_iso();
+    dedupe_strings(&mut thread.linked_queue_item_ids);
+    dedupe_strings(&mut thread.linked_thread_ids);
+    dedupe_strings(&mut thread.linked_handoff_paths);
+    orchestration::write_orchestration(&thread)?;
+
+    Ok(OrchestrationHandoffResult {
+        orchestration: thread,
+        queue_items: created_items,
+        project,
+        project_created,
+    })
+}
+
+fn ensure_orchestration_project(
+    thread: &orchestration::OrchestrationThread,
+    register_if_missing: bool,
+    imported_enabled: bool,
+) -> Result<(BrainProject, bool), String> {
+    let mut projects = read_projects()?;
+    if let Some(project) = projects
+        .iter()
+        .find(|project| project.id == thread.project_id || project.path == thread.project_path)
+        .cloned()
+    {
+        return Ok((project, false));
+    }
+    if !register_if_missing {
+        return Err(format!("Project is not registered in Brain Loop: {}", thread.project_id));
+    }
+
+    let mut project = BrainProject {
+        id: thread.project_id.clone(),
+        name: thread.project_name.clone(),
+        path: thread.project_path.clone(),
+        enabled: imported_enabled,
+        default_agent: default_implementation_runner(),
+        review_interval_minutes: 2,
+        implementation_interval_minutes: 2,
+        priority: "medium".to_string(),
+        auto_merge_on_review_pass: false,
+        brain_path: None,
+        brain_storage: None,
+        path_exists: None,
+        brain_path_exists: None,
+    };
+    validate_project(&project)?;
+    let (brain_path, brain_storage) = project_setup::prepare_project_brain(
+        project.id.as_str(),
+        project.name.as_str(),
+        project.path.as_str(),
+    )?;
+    project.brain_path = Some(brain_path);
+    project.brain_storage = Some(brain_storage);
+    projects.push(project.clone());
+    write_projects(&projects)?;
+    project.path_exists = Some(std::path::Path::new(&project.path).exists());
+    project.brain_path_exists = project
+        .brain_path
+        .as_deref()
+        .map(|path| std::path::Path::new(path).exists());
+    Ok((project, true))
+}
+
+fn unique_queue_id(seed: &str) -> String {
+    let base = orchestration::sanitize_segment(seed);
+    let mut candidate = base.clone();
+    let mut index = 2;
+    while state::queue_item_path(&candidate).exists() {
+        candidate = format!("{}-{}", base, index);
+        index += 1;
+    }
+    candidate
+}
+
+fn normalized_agent(agent: &str) -> String {
+    match agent {
+        "antigravity" | "codex" | "direct-deepseek" | "direct-gemini" => agent.to_string(),
+        _ => "open-code".to_string(),
+    }
+}
+
+fn normalized_priority(priority: &str) -> String {
+    match priority {
+        "high" | "low" => priority.to_string(),
+        _ => "medium".to_string(),
+    }
+}
+
+fn orchestration_messages_as_handoff_body(thread: &orchestration::OrchestrationThread) -> String {
+    if thread.messages.is_empty() {
+        return format!("Implement the work described by orchestration {}.", thread.title);
+    }
+
+    let body = thread
+        .messages
+        .iter()
+        .filter(|message| {
+            message
+                .metadata
+                .get("responseKind")
+                .map(|value| value != "orchestration-intake-guidance")
+                .unwrap_or(true)
+        })
+        .map(|message| format!("### {}\n{}", message.role, message.body))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    if body.trim().is_empty() {
+        format!("Implement the work described by orchestration {}.", thread.title)
+    } else {
+        body
+    }
+}
+
+fn dedupe_strings(values: &mut Vec<String>) {
+    let mut seen = HashSet::new();
+    values.retain(|value| seen.insert(value.clone()));
+}
+
 fn prepare_queue_item_thread_context(
     queue_item_id: &str,
     event: &str,
@@ -1203,6 +1657,24 @@ struct LaunchSpec {
     agent: String,
 }
 
+struct DirectImplementationSpec {
+    provider: direct_model::DirectModelProvider,
+    model: String,
+    cwd: String,
+    run_id: String,
+    prompt: String,
+    agent: String,
+}
+
+struct DirectReviewSpec {
+    provider: direct_model::DirectModelProvider,
+    model: String,
+    cwd: String,
+    run_id: String,
+    prompt: String,
+    agent: String,
+}
+
 fn launch_run_id(kind: &str, queue_item_id: &str) -> String {
     let safe_id = queue_item_id
         .chars()
@@ -1275,6 +1747,69 @@ fn implementation_prompt(item: &brain::QueueItem) -> String {
     )
 }
 
+fn prompt_file_excerpt(path: &str, max_bytes: usize) -> String {
+    if path.trim().is_empty() {
+        return "No path provided.".to_string();
+    }
+
+    match fs::read_to_string(path) {
+        Ok(content) if content.len() > max_bytes => {
+            let mut end = max_bytes;
+            while !content.is_char_boundary(end) {
+                end -= 1;
+            }
+            format!(
+                "{}\n\n[truncated after {} bytes]",
+                &content[..end],
+                max_bytes
+            )
+        }
+        Ok(content) => content,
+        Err(e) => format!("Unable to read {}: {}", path, e),
+    }
+}
+
+fn direct_implementation_prompt(item: &brain::QueueItem) -> String {
+    format!(
+        "Use this Brain queue item:\n- Queue item: {id}\n- Queue file: {queue_file}\n- Project: {project_id}\n- Project path: {project_path}\n- Execution path: {execution_path}\n- Worktree path: {worktree_path}\n- Execution strategy: {execution_strategy}\n- Active handoff: {active_handoff}\n- Recommended runner: {recommended_agent}\n- Recommended model: {recommended_model}\n- Model recommendation reason: {model_reason}\n\nDirect model runtime notes:\n- Implement only the active handoff from the execution path.\n- Inspect files with read_file and search_text relative to the execution path only.\n- Do not try to read global Brain Loop skill files; the active handoff content is embedded below.\n- Use apply_patch for file edits and run_command only when truly needed; those tools require user approval before mutation.\n- Do not edit Brain queue JSON directly. End by calling finish_task with queueStatus \"submitted\" when implementation is complete, or \"blocked\" with a clear lastError when you cannot proceed.\n\nActive handoff content:\n```markdown\n{handoff}\n```",
+        id = item.id.as_str(),
+        queue_file = state::queue_item_path(&item.id).display(),
+        project_id = item.project_id.as_str(),
+        project_path = item.project_path.as_str(),
+        execution_path = execution_path(item),
+        worktree_path = item.worktree_path.as_deref().unwrap_or("none"),
+        execution_strategy = item.execution_strategy.as_deref().unwrap_or("worktree"),
+        active_handoff = item.active_handoff_path.as_str(),
+        recommended_agent = item.recommended_agent.as_str(),
+        recommended_model = item.recommended_model.as_deref().unwrap_or("none"),
+        model_reason = item.model_recommendation_reason.as_deref().unwrap_or("none"),
+        handoff = prompt_file_excerpt(item.active_handoff_path.as_str(), 48_000),
+    )
+}
+
+fn direct_implementation_system_prompt() -> String {
+    "You are a Brain Loop direct implementation runner. Work from the provided handoff, inspect the execution path with tools, make the smallest correct code changes, and finish by calling finish_task. Be precise: ask for approval only for mutations or commands that the direct runtime gates.".to_string()
+}
+
+fn implementation_model(item: &brain::QueueItem) -> String {
+    let settings = read_settings_file().unwrap_or_else(|_| default_settings());
+    item
+        .recommended_model
+        .as_ref()
+        .filter(|model| !model.trim().is_empty())
+        .cloned()
+        .unwrap_or_else(|| {
+            runner_model(
+                &settings,
+                item.agent.as_str(),
+                Some((
+                    settings.default_implementation_runner.as_str(),
+                    settings.default_implementation_model.as_str(),
+                )),
+            )
+        })
+}
+
 fn review_prompt(item: &brain::QueueItem) -> String {
     format!(
         "Read /Users/M1PRO/.codex/skills/brain-review-handoff/SKILL.md and follow it.\n\nReview starting:\n- Queue item: {id}\n- Queue file: {queue_file}\n- Project: {project_id}\n- Project path: {project_path}\n- Execution path: {execution_path}\n- Worktree path: {worktree_path}\n- Execution strategy: {execution_strategy}\n- Status: {status}\n- Priority: {priority}\n- Agent: {agent}\n- Recommended runner: {recommended_agent}\n- Recommended model: {recommended_model}\n- Model recommendation reason: {model_reason}\n- Attempt: {attempt}\n- Created at: {created_at}\n- Picked at: {picked_at}\n- Started at: {started_at}\n- Submitted at: {submitted_at}\n- Plan: {plan}\n- Handoff: {handoff}\n- Active handoff: {active_handoff}\n- Existing review path: {review_path}\n- Runner/session: {runner}/{session}\n- Last error: {last_error}\n\nRun the review workflow for this submitted queue item. If review passes, follow the landing contract before approving. If fixes are required or landing is blocked, update the queue item according to the review skill.",
@@ -1306,25 +1841,43 @@ fn review_prompt(item: &brain::QueueItem) -> String {
     )
 }
 
+fn direct_review_prompt(item: &brain::QueueItem) -> String {
+    format!(
+        "Review this Brain queue item:\n- Queue item: {id}\n- Queue file: {queue_file}\n- Project: {project_id}\n- Project path: {project_path}\n- Execution path: {execution_path}\n- Worktree path: {worktree_path}\n- Execution strategy: {execution_strategy}\n- Status: {status}\n- Priority: {priority}\n- Implementation runner: {agent}\n- Recommended runner: {recommended_agent}\n- Recommended model: {recommended_model}\n- Model recommendation reason: {model_reason}\n- Attempt: {attempt}\n- Submitted at: {submitted_at}\n- Plan: {plan}\n- Handoff: {handoff_path}\n- Active handoff: {active_handoff}\n- Existing review path: {review_path}\n- Runner/session: {runner}/{session}\n- Last error: {last_error}\n\nDirect model review rules:\n- Review only. Do not edit files, apply patches, or run mutating commands.\n- Inspect files with read_file and search_text relative to the execution path only.\n- Compare the implementation against the active handoff content embedded below.\n- End by calling finish_task exactly once.\n- Use queueStatus \"landing\" when the work should proceed to landing/approval.\n- Use queueStatus \"reviewed-fix-request\" when fixes are required; include specific fix instructions in the summary.\n- Use queueStatus \"blocked\" when review cannot safely complete; include lastError or a clear failure reason.\n\nActive handoff content:\n```markdown\n{handoff_content}\n```",
+        id = item.id.as_str(),
+        queue_file = state::queue_item_path(&item.id).display(),
+        project_id = item.project_id.as_str(),
+        project_path = item.project_path.as_str(),
+        execution_path = execution_path(item),
+        worktree_path = item.worktree_path.as_deref().unwrap_or("none"),
+        execution_strategy = item.execution_strategy.as_deref().unwrap_or("worktree"),
+        status = item.status.as_str(),
+        priority = item.priority.as_str(),
+        agent = item.agent.as_str(),
+        recommended_agent = item.recommended_agent.as_str(),
+        recommended_model = item.recommended_model.as_deref().unwrap_or("none"),
+        model_reason = item.model_recommendation_reason.as_deref().unwrap_or("none"),
+        attempt = item.attempt,
+        submitted_at = item.submitted_at.as_deref().unwrap_or("none"),
+        plan = item.plan_path.as_str(),
+        handoff_path = item.handoff_path.as_str(),
+        active_handoff = item.active_handoff_path.as_str(),
+        review_path = item.review_path.as_deref().unwrap_or("none"),
+        runner = item.runner_id.as_deref().unwrap_or("none"),
+        session = item.session_id.as_deref().unwrap_or("none"),
+        last_error = item.last_error.as_deref().unwrap_or("none"),
+        handoff_content = prompt_file_excerpt(item.active_handoff_path.as_str(), 48_000),
+    )
+}
+
+fn direct_review_system_prompt() -> String {
+    "You are a Brain Loop direct review runner. Verify the submitted implementation against the embedded handoff using read-only tools, then finish with a queueStatus of landing, reviewed-fix-request, or blocked. Do not perform implementation work during review.".to_string()
+}
+
 fn implementation_launch_spec(item: &brain::QueueItem, run_id: String) -> Result<LaunchSpec, String> {
     let cwd = execution_path(item);
     let prompt = implementation_prompt(item);
-    let settings = read_settings_file().unwrap_or_else(|_| default_settings());
-    let model = item
-        .recommended_model
-        .as_ref()
-        .filter(|model| !model.trim().is_empty())
-        .cloned()
-        .unwrap_or_else(|| {
-            runner_model(
-                &settings,
-                item.agent.as_str(),
-                Some((
-                    settings.default_implementation_runner.as_str(),
-                    settings.default_implementation_model.as_str(),
-                )),
-            )
-        });
+    let model = implementation_model(item);
     match item.agent.as_str() {
         "open-code" => Ok(LaunchSpec {
             command: "opencode".to_string(),
@@ -1372,11 +1925,58 @@ fn implementation_launch_spec(item: &brain::QueueItem, run_id: String) -> Result
             run_id,
             agent: item.agent.clone(),
         }),
-        other if direct_model::is_direct_provider_runner(other) => {
-            Err(direct_model::pending_runtime_error(other))
-        },
+        other if direct_model::is_direct_provider_runner(other) => Err(format!(
+            "Direct implementation runner {} must use the Brain Loop direct runtime.",
+            other
+        )),
         other => Err(format!("Unsupported implementation agent: {}", other)),
     }
+}
+
+fn direct_implementation_spec(
+    item: &brain::QueueItem,
+    run_id: String,
+) -> Result<Option<DirectImplementationSpec>, String> {
+    let Some(provider) = direct_model::built_in_provider(item.agent.as_str()) else {
+        return Ok(None);
+    };
+
+    Ok(Some(DirectImplementationSpec {
+        provider,
+        model: implementation_model(item),
+        cwd: execution_path(item),
+        run_id,
+        prompt: direct_implementation_prompt(item),
+        agent: item.agent.clone(),
+    }))
+}
+
+fn direct_review_spec(
+    item: &brain::QueueItem,
+    run_id: String,
+) -> Result<Option<DirectReviewSpec>, String> {
+    let settings = read_settings_file().unwrap_or_else(|_| default_settings());
+    let runner = settings.default_review_runner.clone();
+    let Some(provider) = direct_model::built_in_provider(runner.as_str()) else {
+        return Ok(None);
+    };
+    let model = runner_model(
+        &settings,
+        runner.as_str(),
+        Some((
+            settings.default_review_runner.as_str(),
+            settings.default_review_model.as_str(),
+        )),
+    );
+
+    Ok(Some(DirectReviewSpec {
+        provider,
+        model,
+        cwd: execution_path(item),
+        run_id,
+        prompt: direct_review_prompt(item),
+        agent: format!("{}-review", runner),
+    }))
 }
 
 fn review_launch_spec(item: &brain::QueueItem, run_id: String) -> Result<LaunchSpec, String> {
@@ -1470,6 +2070,13 @@ fn launch_detail(spec: &LaunchSpec) -> String {
         }
     }
     format!("{} {}", spec.command, args.join(" "))
+}
+
+fn direct_launch_detail(spec: &DirectImplementationSpec) -> String {
+    format!(
+        "direct-provider {} model={} cwd={}",
+        spec.provider.provider_id, spec.model, spec.cwd
+    )
 }
 
 fn runner_model(settings: &Settings, runner: &str, role_default: Option<(&str, &str)>) -> String {
@@ -1657,6 +2264,31 @@ fn record_dependency_wait(item_id: &str, reason: &str, blocked_by: &[String]) ->
     Ok(())
 }
 
+fn record_runner_disabled_wait(item_id: &str, reason: &str) -> Result<(), String> {
+    let Some(mut item) = brain::read_queue_item(item_id)
+        .map_err(|e| format!("Failed to read queue item {}: {}", item_id, e))?
+    else {
+        return Ok(());
+    };
+
+    if item.waiting_reason.as_deref() == Some(reason) {
+        return Ok(());
+    }
+
+    let agent = item.agent.clone();
+    item.waiting_reason = Some(reason.to_string());
+    append_history(
+        &mut item,
+        "runner_disabled_waiting",
+        reason,
+        Some(agent),
+    );
+    brain::write_queue_item(&item)
+        .map_err(|e| format!("Failed to write runner disabled wait reason for {}: {}", item.id, e))?;
+    persist_thread_from_item(&item)?;
+    Ok(())
+}
+
 fn record_review_capacity_wait(item_id: &str, reason: &str) -> Result<(), String> {
     let Some(mut item) = brain::read_queue_item(item_id)
         .map_err(|e| format!("Failed to read queue item {}: {}", item_id, e))?
@@ -1684,6 +2316,28 @@ fn record_review_capacity_wait(item_id: &str, reason: &str) -> Result<(), String
         .map_err(|e| format!("Failed to write review wait reason for {}: {}", item.id, e))?;
     persist_thread_from_item(&item)?;
     Ok(())
+}
+
+fn runner_disabled_waiting_reason(settings: &Settings, runner_id: &str) -> Option<String> {
+    let Some(entry) = settings
+        .runner_catalog
+        .iter()
+        .find(|entry| entry.id == runner_id)
+    else {
+        return Some(format!(
+            "Waiting on unsupported runner `{}`. Enable or replace the queue item's runner before dispatch.",
+            runner_id
+        ));
+    };
+
+    if !entry.enabled {
+        return Some(format!(
+            "Waiting on disabled runner `{}`. Enable it in Settings > Agents before dispatch.",
+            runner_id
+        ));
+    }
+
+    None
 }
 
 fn priority_rank(priority: &str) -> usize {
@@ -1832,6 +2486,485 @@ fn block_queue_item(mut item: brain::QueueItem, by: &str, event: &str, detail: &
         .map_err(|e| format!("Failed to write blocked queue item: {}", e))?;
     persist_thread_from_item(&item)?;
     Ok(())
+}
+
+fn block_direct_queue_item(queue_item_id: &str, event: &str, detail: &str) -> Result<(), String> {
+    let Some(item) = brain::read_queue_item(queue_item_id)
+        .map_err(|e| format!("Failed to read queue item {}: {}", queue_item_id, e))?
+    else {
+        return Ok(());
+    };
+
+    if !matches!(item.status.as_str(), "picked" | "started" | "stale-started") {
+        return Ok(());
+    }
+
+    block_queue_item(item, "brain-loop", event, detail)
+}
+
+fn submit_direct_queue_item(mut item: brain::QueueItem, event: &str, detail: &str) -> Result<(), String> {
+    brain::update_queue_item_status(
+        &mut item,
+        "submitted",
+        "brain-loop",
+        Some(detail),
+        Some(event),
+        Some(detail),
+    )
+    .map_err(|e| format!("Failed to submit direct queue item {}: {}", item.id, e))?;
+    item.waiting_reason = None;
+    item.blocked_by.clear();
+    brain::write_queue_item(&item)
+        .map_err(|e| format!("Failed to write submitted direct queue item {}: {}", item.id, e))?;
+    persist_thread_from_item(&item)?;
+    Ok(())
+}
+
+fn mark_direct_approval_waiting(
+    queue_item_id: &str,
+    result: &direct_model::DirectModelToolLoopResult,
+) -> Result<(), String> {
+    let Some(mut item) = brain::read_queue_item(queue_item_id)
+        .map_err(|e| format!("Failed to read queue item {}: {}", queue_item_id, e))?
+    else {
+        return Ok(());
+    };
+
+    if item.status != "started" {
+        return Ok(());
+    }
+
+    let approval_ids = result
+        .approval_requests
+        .iter()
+        .map(|approval| approval.approval_request.id.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let detail = if approval_ids.is_empty() {
+        "Waiting for direct model tool approval.".to_string()
+    } else {
+        format!("Waiting for direct model tool approval: {}.", approval_ids)
+    };
+    let agent = item.agent.clone();
+    item.waiting_reason = Some(detail.clone());
+    append_history(
+        &mut item,
+        "direct_model_approval_waiting",
+        &detail,
+        Some(agent),
+    );
+    brain::write_queue_item(&item)
+        .map_err(|e| format!("Failed to write direct approval wait for {}: {}", item.id, e))?;
+    persist_thread_from_item(&item)?;
+    Ok(())
+}
+
+fn finish_task_result(
+    result: &direct_model::DirectModelToolLoopResult,
+) -> Option<&direct_model::DirectModelToolResult> {
+    result
+        .tool_results
+        .iter()
+        .rev()
+        .find(|execution| execution.tool_result.name == "finish_task")
+        .map(|execution| &execution.tool_result)
+}
+
+fn apply_direct_implementation_result(
+    queue_item_id: &str,
+    result: direct_model::DirectModelToolLoopResult,
+) -> Result<(), String> {
+    if result.stopped_reason == "approval_required" {
+        return mark_direct_approval_waiting(queue_item_id, &result);
+    }
+
+    let Some(item) = brain::read_queue_item(queue_item_id)
+        .map_err(|e| format!("Failed to read queue item {}: {}", queue_item_id, e))?
+    else {
+        return Ok(());
+    };
+
+    if item.status != "started" {
+        return Ok(());
+    }
+
+    if result.stopped_reason == "max_iterations" {
+        return block_queue_item(
+            item,
+            "brain-loop",
+            "direct_model_max_iterations",
+            "Direct model reached the maximum tool-loop iterations before finishing.",
+        );
+    }
+
+    if result.completed {
+        let finish = finish_task_result(&result);
+        let detail = finish
+            .map(|tool_result| tool_result.content.as_str())
+            .filter(|content| !content.trim().is_empty())
+            .unwrap_or("Direct model completed implementation.");
+        let requested_status = finish
+            .and_then(|tool_result| tool_result.metadata.get("requestedQueueStatus"))
+            .map(|status| status.as_str())
+            .unwrap_or("submitted");
+
+        return match requested_status {
+            "submitted" => submit_direct_queue_item(item, "direct_model_completed", detail),
+            "blocked" => block_queue_item(item, "brain-loop", "direct_model_blocked", detail),
+            other => block_queue_item(
+                item,
+                "brain-loop",
+                "direct_model_invalid_finish_status",
+                &format!(
+                    "Direct model requested unsupported implementation status `{}`. {}",
+                    other, detail
+                ),
+            ),
+        };
+    }
+
+    block_queue_item(
+        item,
+        "brain-loop",
+        "direct_model_incomplete",
+        &format!(
+            "Direct model stopped before completion: {}.",
+            result.stopped_reason
+        ),
+    )
+}
+
+fn direct_review_tool_specs() -> Vec<direct_model::DirectModelToolSpec> {
+    direct_model::tool_specs()
+        .into_iter()
+        .filter(|tool| matches!(tool.name.as_str(), "read_file" | "search_text" | "finish_task"))
+        .collect()
+}
+
+fn apply_direct_review_result(
+    app: &AppHandle,
+    queue_item_id: &str,
+    result: direct_model::DirectModelToolLoopResult,
+) -> Result<(), String> {
+    let Some(mut item) = brain::read_queue_item(queue_item_id)
+        .map_err(|e| format!("Failed to read queue item {}: {}", queue_item_id, e))?
+    else {
+        return Ok(());
+    };
+
+    if item.status != "reviewing" {
+        return Ok(());
+    }
+
+    if result.stopped_reason == "max_iterations" {
+        return block_queue_item(
+            item,
+            "brain-loop",
+            "direct_review_max_iterations",
+            "Direct review reached the maximum tool-loop iterations before finishing.",
+        );
+    }
+
+    if !result.completed {
+        return block_queue_item(
+            item,
+            "brain-loop",
+            "direct_review_incomplete",
+            &format!("Direct review stopped before completion: {}.", result.stopped_reason),
+        );
+    }
+
+    let finish = finish_task_result(&result);
+    let detail = finish
+        .map(|tool_result| tool_result.content.as_str())
+        .filter(|content| !content.trim().is_empty())
+        .unwrap_or("Direct review completed.");
+    let requested_status = finish
+        .and_then(|tool_result| tool_result.metadata.get("requestedQueueStatus"))
+        .map(|status| status.as_str())
+        .unwrap_or("blocked");
+
+    match requested_status {
+        "reviewed-fix-request" | "landing" => {
+            brain::update_queue_item_status(
+                &mut item,
+                requested_status,
+                "brain-loop",
+                Some(detail),
+                Some("direct_review_completed"),
+                Some(detail),
+            )
+            .map_err(|e| format!("Failed to apply direct review result for {}: {}", item.id, e))?;
+            item.waiting_reason = None;
+            item.blocked_by.clear();
+            brain::write_queue_item(&item)
+                .map_err(|e| format!("Failed to write direct review result for {}: {}", item.id, e))?;
+            persist_thread_from_item(&item)?;
+            if requested_status == "landing" {
+                landing::apply_landing_policy(app, &item)?;
+            }
+            Ok(())
+        }
+        "blocked" => block_queue_item(item, "brain-loop", "direct_review_blocked", detail),
+        other => block_queue_item(
+            item,
+            "brain-loop",
+            "direct_review_invalid_finish_status",
+            &format!(
+                "Direct review requested unsupported review status `{}`. {}",
+                other, detail
+            ),
+        ),
+    }
+}
+
+fn spawn_direct_implementation_runner(
+    app: AppHandle,
+    item: brain::QueueItem,
+    spec: DirectImplementationSpec,
+    initial_tool_results: Vec<direct_model::DirectModelToolResult>,
+) {
+    let queue_item_id = item.id.clone();
+    let project_id = item.project_id.clone();
+    thread::spawn(move || {
+        let review_app = app.clone();
+        let has_initial_tool_results = !initial_tool_results.is_empty();
+        let mut messages = vec![direct_model::DirectModelMessage {
+            role: "user".to_string(),
+            content: spec.prompt.clone(),
+            provider_message_id: None,
+            created_at: None,
+            metadata: BTreeMap::new(),
+        }];
+        if has_initial_tool_results {
+            messages.push(direct_model::DirectModelMessage {
+                role: "user".to_string(),
+                content: "An approved direct-model tool has completed. Continue from the tool result and finish the implementation with finish_task when ready.".to_string(),
+                provider_message_id: None,
+                created_at: None,
+                metadata: BTreeMap::new(),
+            });
+        }
+        let turn_input = direct_model::DirectModelTurnInput {
+            runner_id: spec.provider.runner_id.clone(),
+            provider_id: spec.provider.provider_id.clone(),
+            api_style: spec.provider.api_style.clone(),
+            model: spec.model.clone(),
+            queue_item_id: queue_item_id.clone(),
+            thread_id: agent_thread::thread_id_for_queue_item(&queue_item_id),
+            execution_path: spec.cwd.clone(),
+            system_prompt: direct_implementation_system_prompt(),
+            messages,
+            tools: direct_model::tool_specs(),
+            tool_results: initial_tool_results,
+            approval_policy: "on-risky-action".to_string(),
+        };
+        let input = direct_model::DirectModelToolLoopInput {
+            turn_input,
+            max_iterations: Some(6),
+        };
+
+        let runtime = match tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .worker_threads(2)
+            .thread_name("brain-loop-direct-model")
+            .build()
+        {
+            Ok(runtime) => runtime,
+            Err(e) => {
+                let detail = format!("Failed to start direct model runtime: {}", e);
+                let _ = block_direct_queue_item(&queue_item_id, "direct_model_runtime_failed", &detail);
+                let _ = scheduler::log_decision(&format!(
+                    "DIRECT DISPATCH FAILED: {} ({}) — {}",
+                    queue_item_id, project_id, detail
+                ));
+                return;
+            }
+        };
+
+        let result = runtime.block_on(direct_model::execute_provider_tool_loop(app, input));
+        let apply_result = match result {
+            Ok(result) => apply_direct_implementation_result(&queue_item_id, result),
+            Err(e) => block_direct_queue_item(
+                &queue_item_id,
+                "direct_model_failed",
+                &format!("Direct model runner failed: {}", e),
+            ),
+        };
+
+        if let Err(e) = apply_result {
+            let _ = scheduler::log_decision(&format!(
+                "DIRECT DISPATCH RECONCILE FAILED: {} ({}) — {}",
+                queue_item_id, project_id, e
+            ));
+            return;
+        }
+
+        let submitted = brain::read_queue_item(&queue_item_id)
+            .ok()
+            .flatten()
+            .map(|item| item.status == "submitted")
+            .unwrap_or(false);
+        if submitted && scheduler::SCHEDULER.get_state().as_deref() == Ok("running") {
+            let _ = run_review_once(review_app);
+        }
+    });
+}
+
+fn spawn_direct_review_runner(app: AppHandle, item: brain::QueueItem, spec: DirectReviewSpec) {
+    let queue_item_id = item.id.clone();
+    let project_id = item.project_id.clone();
+    thread::spawn(move || {
+        let followup_app = app.clone();
+        let messages = vec![direct_model::DirectModelMessage {
+            role: "user".to_string(),
+            content: spec.prompt.clone(),
+            provider_message_id: None,
+            created_at: None,
+            metadata: BTreeMap::new(),
+        }];
+        let turn_input = direct_model::DirectModelTurnInput {
+            runner_id: spec.provider.runner_id.clone(),
+            provider_id: spec.provider.provider_id.clone(),
+            api_style: spec.provider.api_style.clone(),
+            model: spec.model.clone(),
+            queue_item_id: queue_item_id.clone(),
+            thread_id: agent_thread::thread_id_for_queue_item(&queue_item_id),
+            execution_path: spec.cwd.clone(),
+            system_prompt: direct_review_system_prompt(),
+            messages,
+            tools: direct_review_tool_specs(),
+            tool_results: Vec::new(),
+            approval_policy: "never".to_string(),
+        };
+        let input = direct_model::DirectModelToolLoopInput {
+            turn_input,
+            max_iterations: Some(4),
+        };
+
+        let runtime = match tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .worker_threads(2)
+            .thread_name("brain-loop-direct-review")
+            .build()
+        {
+            Ok(runtime) => runtime,
+            Err(e) => {
+                let detail = format!("Failed to start direct review runtime: {}", e);
+                let _ = block_queue_item(
+                    item.clone(),
+                    "brain-loop",
+                    "direct_review_runtime_failed",
+                    &detail,
+                );
+                let _ = scheduler::log_decision(&format!(
+                    "DIRECT REVIEW FAILED: {} ({}) — {}",
+                    queue_item_id, project_id, detail
+                ));
+                return;
+            }
+        };
+
+        let result = runtime.block_on(direct_model::execute_provider_tool_loop(app.clone(), input));
+        let apply_result = match result {
+            Ok(result) => apply_direct_review_result(&app, &queue_item_id, result),
+            Err(e) => {
+                let Some(item) = brain::read_queue_item(&queue_item_id).ok().flatten() else {
+                    return;
+                };
+                block_queue_item(
+                    item,
+                    "brain-loop",
+                    "direct_review_failed",
+                    &format!("Direct review runner failed: {}", e),
+                )
+            }
+        };
+
+        if let Err(e) = apply_result {
+            let _ = scheduler::log_decision(&format!(
+                "DIRECT REVIEW RECONCILE FAILED: {} ({}) — {}",
+                queue_item_id, project_id, e
+            ));
+            return;
+        }
+
+        if scheduler::SCHEDULER.get_state().as_deref() != Ok("running") {
+            return;
+        }
+
+        let status = brain::read_queue_item(&queue_item_id)
+            .ok()
+            .flatten()
+            .map(|item| item.status)
+            .unwrap_or_default();
+        if status == "reviewed-fix-request" {
+            let _ = run_implementation_once(followup_app.clone());
+        }
+        let _ = run_review_once(followup_app);
+    });
+}
+
+fn resume_direct_implementation_after_approved_tool(
+    app: AppHandle,
+    approval_request: &approval::ApprovalRequest,
+    tool_result: direct_model::DirectModelToolResult,
+) -> Result<(), String> {
+    let Some(queue_item_id) = approval_request.queue_item_id.as_deref() else {
+        return Ok(());
+    };
+    let Some(mut item) = brain::read_queue_item(queue_item_id)
+        .map_err(|e| format!("Failed to read queue item {} after approved tool: {}", queue_item_id, e))?
+    else {
+        return Ok(());
+    };
+
+    if item.status != "started" || !direct_model::is_direct_provider_runner(item.agent.as_str()) {
+        return Ok(());
+    }
+
+    let run_id = item
+        .runner_id
+        .clone()
+        .unwrap_or_else(|| launch_run_id("implementation", &item.id));
+    let Some(spec) = direct_implementation_spec(&item, run_id.clone())? else {
+        return Ok(());
+    };
+
+    item.waiting_reason = None;
+    item.blocked_by.clear();
+    let agent = item.agent.clone();
+    append_history(
+        &mut item,
+        "direct_model_approved_tool_resuming",
+        &format!(
+            "Approved direct tool {} completed; resuming provider loop.",
+            tool_result.name
+        ),
+        Some(agent),
+    );
+    brain::write_queue_item(&item)
+        .map_err(|e| format!("Failed to write direct resume state for {}: {}", item.id, e))?;
+    persist_thread_from_item(&item)?;
+
+    let mut initial_tool_results = direct_model::prior_tool_results_from_approval(approval_request)?;
+    initial_tool_results.push(tool_result);
+    spawn_direct_implementation_runner(app, item, spec, initial_tool_results);
+    Ok(())
+}
+
+#[tauri::command]
+fn execute_approved_direct_model_tool(
+    app: AppHandle,
+    input: direct_model::DirectModelApprovedToolExecutionInput,
+) -> Result<direct_model::DirectModelApprovedToolExecutionResult, String> {
+    let result = direct_model::execute_approved_tool(app.clone(), input.clone())?;
+    resume_direct_implementation_after_approved_tool(
+        app,
+        &result.approval_request,
+        result.tool_execution_result.tool_result.clone(),
+    )?;
+    Ok(result)
 }
 
 struct RunCompletion {
@@ -2046,6 +3179,19 @@ fn reconcile_stale_active_items() -> Result<usize, String> {
                 reconciled += 1;
             }
             "started" if is_older_than_minutes(item.agent_started_at.as_ref().or(item.picked_at.as_ref()), max_minutes) => {
+                if direct_model::is_direct_provider_runner(item.agent.as_str())
+                    && item
+                        .waiting_reason
+                        .as_deref()
+                        .map(|reason| reason.starts_with("Waiting for direct model tool approval"))
+                        .unwrap_or(false)
+                {
+                    scheduler::log_decision(&format!(
+                        "RECONCILE: {} direct model is waiting for approval",
+                        item.id
+                    ));
+                    continue;
+                }
                 let completion = find_run_completion(&item.id, item.runner_id.as_ref());
                 let item_id = item.id.clone();
                 apply_stale_implementation_reconciliation(item, completion)?;
@@ -2082,12 +3228,17 @@ fn reconcile_stale_active_items() -> Result<usize, String> {
 fn launch_implementation_item(app: AppHandle, queue_item_id: &str) -> Result<String, String> {
     let mut item = prepare_queue_item_thread_context(queue_item_id, "implementation_thread_prepared")?;
     let run_id = launch_run_id("implementation", &item.id);
-    let spec = match implementation_launch_spec(&item, run_id.clone()) {
-        Ok(spec) => spec,
-        Err(e) => {
-            let _ = block_queue_item(item, "brain-loop", "unsupported_agent", &e);
-            return Err(e);
+    let direct_spec = direct_implementation_spec(&item, run_id.clone())?;
+    let cli_spec = if direct_spec.is_none() {
+        match implementation_launch_spec(&item, run_id.clone()) {
+            Ok(spec) => Some(spec),
+            Err(e) => {
+                let _ = block_queue_item(item, "brain-loop", "unsupported_agent", &e);
+                return Err(e);
+            }
         }
+    } else {
+        None
     };
 
     brain::update_queue_item_status(
@@ -2113,15 +3264,34 @@ fn launch_implementation_item(app: AppHandle, queue_item_id: &str) -> Result<Str
     item.last_error = None;
     item.waiting_reason = None;
     item.blocked_by.clear();
-    append_history(
-        &mut item,
-        "runner_launch",
-        &launch_detail(&spec),
-        Some(spec.agent.clone()),
-    );
+    if let Some(spec) = direct_spec.as_ref() {
+        item.session_id = Some(spec.run_id.clone());
+        append_history(
+            &mut item,
+            "direct_runner_launch",
+            &direct_launch_detail(spec),
+            Some(spec.agent.clone()),
+        );
+    } else if let Some(spec) = cli_spec.as_ref() {
+        append_history(
+            &mut item,
+            "runner_launch",
+            &launch_detail(spec),
+            Some(spec.agent.clone()),
+        );
+    }
     brain::write_queue_item(&item)
         .map_err(|e| format!("Failed to write started queue item: {}", e))?;
     persist_thread_from_item(&item)?;
+
+    if let Some(spec) = direct_spec {
+        spawn_direct_implementation_runner(app, item.clone(), spec, Vec::new());
+        return Ok(format!("Started direct implementation runner {} for {}", run_id, item.id));
+    }
+
+    let Some(spec) = cli_spec else {
+        return Err(format!("Unsupported implementation agent: {}", item.agent));
+    };
 
     runner::run_process(
         app,
@@ -2140,12 +3310,17 @@ fn launch_implementation_item(app: AppHandle, queue_item_id: &str) -> Result<Str
 fn launch_review_item(app: AppHandle, queue_item_id: &str) -> Result<String, String> {
     let mut item = prepare_queue_item_thread_context(queue_item_id, "review_thread_prepared")?;
     let run_id = launch_run_id("review", &item.id);
-    let spec = match review_launch_spec(&item, run_id.clone()) {
-        Ok(spec) => spec,
-        Err(e) => {
-            let _ = block_queue_item(item, "brain-loop", "unsupported_review_runner", &e);
-            return Err(e);
+    let direct_spec = direct_review_spec(&item, run_id.clone())?;
+    let cli_spec = if direct_spec.is_none() {
+        match review_launch_spec(&item, run_id.clone()) {
+            Ok(spec) => Some(spec),
+            Err(e) => {
+                let _ = block_queue_item(item, "brain-loop", "unsupported_review_runner", &e);
+                return Err(e);
+            }
         }
+    } else {
+        None
     };
 
     brain::update_queue_item_status(
@@ -2161,15 +3336,37 @@ fn launch_review_item(app: AppHandle, queue_item_id: &str) -> Result<String, Str
     item.last_error = None;
     item.waiting_reason = None;
     item.blocked_by.clear();
-    append_history(
-        &mut item,
-        "review_runner_launch",
-        &launch_detail(&spec),
-        Some(spec.agent.clone()),
-    );
+    if let Some(spec) = direct_spec.as_ref() {
+        item.session_id = Some(spec.run_id.clone());
+        append_history(
+            &mut item,
+            "direct_review_runner_launch",
+            &format!(
+                "direct-provider {} model={} cwd={}",
+                spec.provider.provider_id, spec.model, spec.cwd
+            ),
+            Some(spec.agent.clone()),
+        );
+    } else if let Some(spec) = cli_spec.as_ref() {
+        append_history(
+            &mut item,
+            "review_runner_launch",
+            &launch_detail(spec),
+            Some(spec.agent.clone()),
+        );
+    }
     brain::write_queue_item(&item)
         .map_err(|e| format!("Failed to write reviewing queue item: {}", e))?;
     persist_thread_from_item(&item)?;
+
+    if let Some(spec) = direct_spec {
+        spawn_direct_review_runner(app, item.clone(), spec);
+        return Ok(format!("Started direct review runner {} for {}", run_id, item.id));
+    }
+
+    let Some(spec) = cli_spec else {
+        return Err(format!("Unsupported review runner for {}", item.id));
+    };
 
     runner::run_process(
         app,
@@ -2369,6 +3566,157 @@ fn run_local_automation_triage(app: AppHandle) -> Result<String, String> {
     }
 }
 
+fn enabled_project_paths() -> Result<HashSet<String>, String> {
+    let projects = list_projects().unwrap_or_default();
+    let enabled_paths = projects
+        .iter()
+        .filter(|project| project.enabled)
+        .map(|project| project.path.clone())
+        .collect::<HashSet<_>>();
+
+    if enabled_paths.is_empty() {
+        return Err("No enabled projects found.".to_string());
+    }
+
+    Ok(enabled_paths)
+}
+
+fn ensure_manual_item_project_enabled(
+    item: &QueueItem,
+    enabled_paths: &HashSet<String>,
+) -> Result<(), String> {
+    if enabled_paths.contains(&item.project_path) {
+        return Ok(());
+    }
+
+    Err(format!(
+        "Task {} is assigned to disabled or unregistered project {}.",
+        item.id, item.project_path
+    ))
+}
+
+fn run_single_implementation_item(
+    app: AppHandle,
+    item: &QueueItem,
+    queue: &[QueueItem],
+    settings: &Settings,
+) -> Result<String, String> {
+    if let Some(reason) = runner_disabled_waiting_reason(settings, item.agent.as_str()) {
+        let _ = record_runner_disabled_wait(&item.id, &reason);
+        scheduler::SCHEDULER.record_skip(&format!(
+            "Manual start waiting {} ({}) - {}",
+            item.id, item.status, reason
+        ))?;
+        return Err(reason);
+    }
+
+    if let Some((reason, blocked_by)) = dependency_waiting_reason(queue, item) {
+        let _ = record_dependency_wait(&item.id, &reason, &blocked_by);
+        scheduler::SCHEDULER.record_skip(&format!(
+            "Manual start waiting {} ({}) - {}",
+            item.id, item.status, reason
+        ))?;
+        return Err(reason);
+    }
+
+    let legacy_max = scheduler::read_max_running_processes();
+    let active = MaxLoopRuntimeState::from_queue(queue);
+    if let Some(reason) = max_loop_waiting_reason(settings, &active, item, legacy_max) {
+        let _ = record_max_loop_wait(&item.id, &reason);
+        scheduler::SCHEDULER.record_skip(&format!(
+            "Manual start waiting {} ({}) - {}",
+            item.id, item.status, reason
+        ))?;
+        return Err(reason);
+    }
+
+    let detail = launch_implementation_item(app, &item.id)?;
+    scheduler::log_decision(&format!("MANUAL DISPATCH: {}", detail));
+    Ok(format!(
+        "Manual implementation start complete. {}",
+        detail
+    ))
+}
+
+fn run_single_review_item(app: AppHandle, item: &QueueItem) -> Result<String, String> {
+    let settings = read_settings_file().unwrap_or_else(|_| default_settings());
+    if let Some(reason) = runner_disabled_waiting_reason(&settings, settings.default_review_runner.as_str()) {
+        let _ = record_runner_disabled_wait(&item.id, &reason);
+        scheduler::SCHEDULER.record_skip(&format!(
+            "Manual review waiting {} ({}) - {}",
+            item.id, item.status, reason
+        ))?;
+        return Err(reason);
+    }
+
+    let active_review = scheduler::count_active_review_processes();
+    let max_review = scheduler::read_max_review_agents();
+    if !scheduler::SCHEDULER.can_launch_work(active_review, max_review) {
+        let reason = format!(
+            "Waiting on review capacity: {} active review agents >= {}.",
+            active_review, max_review
+        );
+        let _ = record_review_capacity_wait(&item.id, &reason);
+        scheduler::SCHEDULER.record_skip(&format!(
+            "Manual review waiting {} ({}) - {}",
+            item.id, item.status, reason
+        ))?;
+        return Err(reason);
+    }
+
+    let detail = launch_review_item(app, &item.id)?;
+    scheduler::log_decision(&format!("MANUAL REVIEW DISPATCH: {}", detail));
+    Ok(format!("Manual review start complete. {}", detail))
+}
+
+#[tauri::command]
+fn run_queue_item_once(app: AppHandle, queue_item_id: String) -> Result<String, String> {
+    let reconciled = reconcile_stale_active_items()?;
+    let queue = list_queue().map(|response| response.items).unwrap_or_default();
+    let item = queue
+        .iter()
+        .find(|candidate| candidate.id == queue_item_id)
+        .cloned()
+        .ok_or_else(|| format!("Queue item not found: {}", queue_item_id))?;
+
+    let enabled_paths = enabled_project_paths()?;
+    ensure_manual_item_project_enabled(&item, &enabled_paths)?;
+
+    let settings = read_settings_file().unwrap_or_else(|_| default_settings());
+    let result = match item.status.as_str() {
+        "queued" | "reviewed-fix-request" => {
+            run_single_implementation_item(app, &item, &queue, &settings)
+        }
+        "submitted" => run_single_review_item(app, &item),
+        "picked" | "started" | "reviewing" => Err(format!(
+            "Task {} is already active with status {}.",
+            item.id, item.status
+        )),
+        "landing" => Err(format!(
+            "Task {} is waiting on landing or approval and cannot be manually started.",
+            item.id
+        )),
+        "approved" => Err(format!(
+            "Task {} is already approved and cannot be manually started.",
+            item.id
+        )),
+        "blocked" | "stale-started" => Err(format!(
+            "Task {} has status {}. Move it back to queued or submitted before starting.",
+            item.id, item.status
+        )),
+        other => Err(format!(
+            "Task {} has unsupported status {} for manual start.",
+            item.id, other
+        )),
+    }?;
+
+    scheduler::SCHEDULER.record_tick(&format!(
+        "Manual queue item start: {}. Reconciled stale items: {}.",
+        result, reconciled
+    ))?;
+    Ok(result)
+}
+
 #[tauri::command]
 fn run_implementation_once(app: AppHandle) -> Result<String, String> {
     let state = scheduler::SCHEDULER.get_state()?;
@@ -2417,11 +3765,19 @@ fn run_implementation_once(app: AppHandle) -> Result<String, String> {
     let mut launch_errors = 0usize;
     let mut policy_waiting = 0usize;
     let mut dependency_waiting = 0usize;
+    let mut runner_waiting = 0usize;
 
     for item in eligible
         .iter()
         .filter(|item| enabled_paths.contains(&item.project_path))
     {
+        if let Some(reason) = runner_disabled_waiting_reason(&settings, item.agent.as_str()) {
+            runner_waiting += 1;
+            let _ = record_runner_disabled_wait(&item.id, &reason);
+            scheduler::SCHEDULER.record_skip(&format!("Waiting {} ({}) — {}", item.id, item.status, reason))?;
+            continue;
+        }
+
         if let Some((reason, blocked_by)) = dependency_waiting_reason(&queue, item) {
             dependency_waiting += 1;
             let _ = record_dependency_wait(&item.id, &reason, &blocked_by);
@@ -2463,8 +3819,8 @@ fn run_implementation_once(app: AppHandle) -> Result<String, String> {
     }
 
     let msg = format!(
-        "Implementation tick fired. Reconciled stale items: {}. Scheduling policy: {}. Active before tick: {}/{}. Enabled projects: {}. Eligible items: {} ({} skipped — disabled projects). Open global slots: {}. Launched: {}. Dependency waiting: {}. MaxLoop waiting: {}. Launch errors: {}",
-        reconciled, settings.scheduling_policy, active_before_tick, max, enabled_paths.len(), eligible_enabled, skipped_disabled, open_slots, launched, dependency_waiting, policy_waiting, launch_errors
+        "Implementation tick fired. Reconciled stale items: {}. Scheduling policy: {}. Active before tick: {}/{}. Enabled projects: {}. Eligible items: {} ({} skipped — disabled projects). Open global slots: {}. Launched: {}. Runner waiting: {}. Dependency waiting: {}. MaxLoop waiting: {}. Launch errors: {}",
+        reconciled, settings.scheduling_policy, active_before_tick, max, enabled_paths.len(), eligible_enabled, skipped_disabled, open_slots, launched, runner_waiting, dependency_waiting, policy_waiting, launch_errors
     );
     scheduler::SCHEDULER.record_tick(&msg)?;
     Ok(msg)
@@ -2631,6 +3987,7 @@ pub fn run() {
             get_brain_status,
             get_settings,
             update_settings,
+            inspect_project_folder,
             list_projects,
             create_project,
             update_project,
@@ -2639,6 +3996,12 @@ pub fn run() {
             list_agent_threads,
             list_archived_agent_threads,
             archive_agent_thread,
+            list_orchestrations,
+            create_orchestration,
+            append_orchestration_message,
+            run_orchestration_turn,
+            update_orchestration_project,
+            handoff_orchestration,
             harness::list_harness_capabilities,
             harness::start_harness_session,
             harness::send_harness_message,
@@ -2650,8 +4013,11 @@ pub fn run() {
             direct_model::preview_direct_model_stream_events,
             direct_model::preview_direct_model_harness_events,
             direct_model::record_direct_model_harness_events,
+            direct_model::execute_direct_model_turn,
+            direct_model::execute_direct_model_tool_loop,
             direct_model::execute_direct_model_tool,
             direct_model::request_direct_model_tool_approval,
+            execute_approved_direct_model_tool,
             list_recent_logs,
             update_queue_item_status,
             acquire_brain_lock,
@@ -2661,6 +4027,7 @@ pub fn run() {
             pause_automation,
             stop_automation,
             get_scheduler_status,
+            run_queue_item_once,
             run_implementation_once,
             run_review_once,
             approval::list_approval_requests,

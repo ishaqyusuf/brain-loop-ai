@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -34,6 +35,8 @@ pub struct ApprovalRequest {
     pub runner_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub metadata: BTreeMap<String, String>,
     pub requested_by: String,
     pub requested_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -56,6 +59,8 @@ pub struct ApprovalRequestInput {
     pub project_id: Option<String>,
     pub runner_id: Option<String>,
     pub session_id: Option<String>,
+    #[serde(default)]
+    pub metadata: BTreeMap<String, String>,
     pub requested_by: Option<String>,
 }
 
@@ -201,6 +206,7 @@ pub fn request_approval(
         project_id: input.project_id,
         runner_id: input.runner_id,
         session_id: input.session_id,
+        metadata: input.metadata,
         requested_by: requested_by.clone(),
         requested_at: now.clone(),
         resolved_by: None,
@@ -265,6 +271,7 @@ pub fn request_merge_approval(
         project_id: Some(item.project_id.clone()),
         runner_id: item.review_runner_id.clone().or_else(|| item.runner_id.clone()),
         session_id: item.session_id.clone(),
+        metadata: BTreeMap::new(),
         requested_by: "brain-loop".to_string(),
         requested_at: now.clone(),
         resolved_by: None,
@@ -286,6 +293,21 @@ pub fn request_merge_approval(
 
     let _ = app.emit("approval-requested", &request);
     Ok(request)
+}
+
+pub fn get_request(
+    state: State<'_, ApprovalState>,
+    request_id: &str,
+) -> Result<ApprovalRequest, String> {
+    let requests = state
+        .requests
+        .lock()
+        .map_err(|_| "Approval state lock poisoned.".to_string())?;
+    requests
+        .iter()
+        .find(|request| request.id == request_id)
+        .cloned()
+        .ok_or_else(|| format!("Approval request not found: {}", request_id))
 }
 
 #[tauri::command]

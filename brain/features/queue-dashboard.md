@@ -36,6 +36,7 @@ Make global handoff queue state visible, searchable, and actionable without open
 - Queue summary metrics show active, blocked, stale, submitted, and approved work without row-by-row inspection.
 - Stale picked/started/stale-started work and disabled or unknown project assignments surface as warnings without mutating queue JSON.
 - Row-level `Details` actions trigger a side-sheet exposing task name, execution path, worktree path, plan path, handoff path, active handoff path, review path, runner/session IDs, submitted/reviewed/approved timestamps, lease timing, explicit last error state, and history log.
+- Row-level `Start` actions launch only that task's next eligible step without starting the global automation loop: implementation for `queued`/`reviewed-fix-request`, review for `submitted`, and disabled tooltip copy for active, waiting, landing, blocked, stale, approved, disabled-project, or capacity-full states.
 - Queue-backed thread rows and queue details prefer `threadTitle` for the human-readable title. Older queue items can still use `threadName` or `taskName`, and missing titles are displayed from a cleaned slug with date prefixes and hyphens removed.
 - Queue detail sheets expose recommended runner, recommended model, and model recommendation reason.
 - Queue items with a durable `waitingReason` show a compact Waiting badge, appear in queue warnings, and expose the full waiting reason in the detail sheet.

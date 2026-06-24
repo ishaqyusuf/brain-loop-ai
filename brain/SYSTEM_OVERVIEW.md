@@ -18,6 +18,7 @@ The app reads and writes:
   projects.json
   approvals.json
   queues/handoffs/*.json
+  orchestrations/*.json
   threads/*.json
   worktrees/
   locks/

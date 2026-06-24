@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
-import type { ApprovalKind, ApprovalRequest } from "@brain-loop/brain-core";
+import type { ApprovalRequest } from "@brain-loop/brain-core";
 import {
   approveRequest,
   denyRequest,
+  executeApprovedDirectModelTool,
   expireRequest,
   listApprovalRequests,
   onApprovalEvent,
-  requestApproval,
 } from "@brain-loop/desktop-client";
 import { AlertCircle, CheckCircle2, Clock } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -14,31 +14,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-
-const sampleRequests: Record<ApprovalKind, Omit<Parameters<typeof requestApproval>[0], "kind">> = {
-  command: {
-    title: "Run escalated command",
-    description: "Allow a runner to execute a command that needs explicit user approval.",
-    risk: "The command may change files or system state outside normal automation.",
-    command: "example --requires-approval",
-    path: "/Users/M1PRO/Documents/code/brain-loop",
-    requestedBy: "manual-stub",
-  },
-  permission: {
-    title: "Use authenticated browser fallback",
-    description: "Allow a runner to use a permission-sensitive fallback for an authenticated workflow.",
-    risk: "The action may depend on local user session state.",
-    path: "/Users/M1PRO/Documents/code/brain-loop",
-    requestedBy: "manual-stub",
-  },
-  destructive: {
-    title: "Override queue status",
-    description: "Allow a destructive queue-state override requested by automation.",
-    risk: "The action can block or replace a queue item state.",
-    path: "/Users/M1PRO/.brain-loop/queues/handoffs",
-    requestedBy: "manual-stub",
-  },
-};
 
 export function ApprovalPanel() {
   const [requests, setRequests] = useState<ApprovalRequest[]>([]);
@@ -67,19 +42,13 @@ export function ApprovalPanel() {
     };
   }, []);
 
-  async function createSample(kind: ApprovalKind) {
-    try {
-      await requestApproval({ kind, ...sampleRequests[kind] });
-      await refresh();
-    } catch (e) {
-      setMessage({ ok: false, text: String(e) });
-    }
-  }
-
   async function resolveRequest(request: ApprovalRequest, action: "approve" | "deny" | "expire") {
     try {
       if (action === "approve") {
-        await approveRequest(request.id, "desktop-user");
+        const approved = await approveRequest(request.id, "desktop-user");
+        if (approved.command?.startsWith("direct-model:")) {
+          await executeApprovedDirectModelTool({ approvalRequestId: approved.id });
+        }
       } else if (action === "deny") {
         await denyRequest(request.id, "desktop-user", "Denied from the desktop approval card.");
       } else {
@@ -110,18 +79,6 @@ export function ApprovalPanel() {
           <AlertDescription>{message.text}</AlertDescription>
         </Alert>
       )}
-
-      <div className="flex flex-wrap justify-end gap-2">
-        <Button size="sm" variant="secondary" onClick={() => void createSample("command")}>
-          Stub Command
-        </Button>
-        <Button size="sm" variant="secondary" onClick={() => void createSample("permission")}>
-          Stub Permission
-        </Button>
-        <Button size="sm" variant="secondary" onClick={() => void createSample("destructive")}>
-          Stub Destructive
-        </Button>
-      </div>
 
       {requests.length === 0 ? (
         <Alert>
@@ -178,7 +135,7 @@ export function ApprovalPanel() {
                       Deny
                     </Button>
                     <Button size="sm" variant="secondary" onClick={() => void resolveRequest(request, "approve")}>
-                      Approve
+                      {request.command?.startsWith("direct-model:") ? "Approve & Run" : "Approve"}
                     </Button>
                   </div>
                 )}
